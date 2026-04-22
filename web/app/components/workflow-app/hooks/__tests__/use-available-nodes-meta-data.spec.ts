@@ -46,4 +46,22 @@ describe('useAvailableNodesMetaData', () => {
       title: 'workflow.blocks.start',
     })
   })
+
+  // Regression: EnsembleAggregator must live in WORKFLOW_COMMON_NODES so the
+  // block selector and add-block flow can resolve its defaultValue. Missing
+  // this registration once already broke the "add node" entry at runtime
+  // while passing every enum-level check.
+  it.each([true, false])(
+    'should expose EnsembleAggregator metadata in both chat and workflow modes (isChatMode=%s)',
+    (isChatMode) => {
+      mockUseIsChatMode.mockReturnValue(isChatMode)
+
+      const { result } = renderHook(() => useAvailableNodesMetaData())
+
+      expect(result.current.nodesMap?.[BlockEnum.EnsembleAggregator]).toBeDefined()
+      expect(result.current.nodesMap?.[BlockEnum.EnsembleAggregator]?.defaultValue).toMatchObject({
+        type: BlockEnum.EnsembleAggregator,
+      })
+    },
+  )
 })

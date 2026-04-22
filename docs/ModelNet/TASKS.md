@@ -167,32 +167,43 @@ Phase 3 测试文档  ──► 收尾
 
 跑 `uv run --project api pytest api/tests/unit_tests/core/workflow/nodes/ensemble_aggregator/ -v -o addopts=""`（仓库 pytest.ini 带 `--cov`，本地 venv 未装 pytest-cov，需用 `-o addopts=""` 覆盖）
 
-### P1.5 前端：建 ensemble-aggregator 包（default/types/node/panel/use-config + strategy-selector）
+### ✅ P1.5 前端：建 ensemble-aggregator 包（default/types/node/panel/use-config + strategy-selector）(2026-04-21)
 
-`web/app/components/workflow/nodes/ensemble-aggregator/`：
+`web/app/components/workflow/nodes/ensemble-aggregator/` 7 文件 / 635 行落位：
 
-- `default.ts`: 默认 `strategy_name="majority_vote"`
-- `types.ts`: TS 类型镜像后端 `EnsembleAggregatorNodeData`
-- `node.tsx`: 画布缩略 UI（参考 `knowledge-retrieval/node.tsx`）
-- `panel.tsx`: 右侧配置面板，含上游变量选择 + strategy 下拉
-- `use-config.ts`: 状态 hook
-- `components/strategy-selector.tsx`: 下拉 + 动态 schema 表单
+- `types.ts`（39）：`AggregationInputRef` / `EnsembleAggregatorNodeType` 1:1 镜像后端；`strategy_config: Record<string, unknown>` 对齐后端 `dict[str, object]`；暴露 `ENSEMBLE_AGGREGATOR_NODE_TYPE` / `ENSEMBLE_STRATEGY_NAMES` / `ConcatConfig` / `DEFAULT_CONCAT_SEPARATOR`
+- `default.ts`：默认 `strategy_name="majority_vote"` + 空 `strategy_config`；`checkValid` 前端早抛后端 Pydantic 校验（≥2 输入 / source_id 非空 + 唯一 / variable_selector ≥2 段 / `strategy_config` 按策略白名单 + 已知字段类型守卫）；`type` 用 `as unknown as BlockEnum` cast 兜底（P1.6 ① 加完 enum 后删 cast，避免 Record<BlockEnum> 三连 cascade）
+- `use-config.ts`：`useNodeCrud` + `useAvailableVarList`；9 个 handler（add/remove/source_id/selector/strategy/strategyConfig）；策略切换时 reset config 避开后端 `extra="forbid"`；`handleStrategyConfigChange` 把 patch 里 `undefined` 当"删除 key"处理；`filterStringVar` 放行所有 segment.text 可渲染类型 + 禁 file var
+- `components/input-list.tsx`：`source_id` `Input` + `VarReferencePicker` + `RemoveButton` 单行；默认命名 `model_{N}`
+- `components/strategy-selector.tsx`：`DropdownMenu` 选策略（**重选当前策略不触发 reset**，避免误清 config）；`majority_vote` 展示 hint；`concat` 展示 `separator` `Input`（**清空 = 删除 key 让后端用默认分隔符**）+ `include_source_label` `Switch`
+- `panel.tsx`（91）：Field(inputs) + Field(strategy) + `OutputVars(text, metadata)`
+- `node.tsx`（30）：画布缩略显示策略名 + 输入条数；无 input 时不渲染
+- **不动**：`BlockEnum` / `BLOCKS` / `NodeComponentMap` / `PanelComponentMap` / `DEFAULT_ICON_MAP` / `SUPPORT_OUTPUT_VARS_NODE` / `singleRunFormParamsHooks` / `getNodeOutputVars` / `canRunBySingle` / i18n — 全留 P1.6
+- **验收**：包骨架落地；`pnpm type-check:tsgo` 延 P1.7（本地 `web/node_modules` 缺失，P1.6 完成后整体跑更有效）
+- 详见 `docs/ModelNet/P1.5_LANDING.md`
 
-### P1.6 前端：完成 9 处注册改动 + i18n（ensemble-aggregator）
+### ✅ P1.6 前端：完成 9 处注册改动 + i18n（ensemble-aggregator）(2026-04-21)
 
-按 DEVELOPMENT_PLAN.md §5.5 的 9 必填注册点：
+按 DEVELOPMENT_PLAN.md §5.5 的 9 必填注册点落地：
 
 | # | 文件 | 改动 |
 |---|---|---|
-| ① | `web/app/components/workflow/types.ts` | `BlockEnum` 加 `EnsembleAggregator` |
-| ② | `web/app/components/workflow/block-selector/constants.tsx` | `BLOCKS` 加一项 |
-| ③ | `web/app/components/workflow/nodes/components.ts` | `NodeComponentMap` + `PanelComponentMap` |
-| ④ | `web/app/components/workflow/nodes/constants.ts` | icon/颜色/默认配置 |
-| ⑤ | `web/app/components/workflow/constants.ts:111` | `SUPPORT_OUTPUT_VARS_NODE` |
-| ⑥ | `web/app/components/workflow/nodes/_base/components/workflow-panel/last-run/use-last-run.ts:43` | `singleRunFormParamsHooks` |
-| ⑦ | `web/app/components/workflow/nodes/_base/components/variable/utils.ts:2092` | `getNodeOutputVars` switch case 返回 `[[id,"text"], [id,"metadata"]]` |
-| ⑧ | `web/app/components/workflow/utils/workflow.ts:16` | `canRunBySingle` |
-| ⑨ | `web/i18n/{en-US,zh-Hans}/workflow.ts` | 节点名/配置项标签/错误提示 |
+| ① | `web/app/components/workflow/types.ts` | `BlockEnum.EnsembleAggregator = 'ensemble-aggregator'`（枚举末尾）|
+| ② | `web/app/components/workflow/block-selector/constants.tsx` | `BLOCKS` 加一项，`classification: Transform`，挂在 `VariableAggregator` 后 |
+| ③ | `web/app/components/workflow/nodes/components.ts` | `NodeComponentMap` + `PanelComponentMap` 各 +1 行；顶部 import `EnsembleAggregatorNode` / `EnsembleAggregatorPanel` |
+| ④ | `web/app/components/workflow/block-icon.tsx`（实测位置；TASKS.md v2 的 `nodes/constants.ts` 记载实际应为本文件：`DEFAULT_ICON_MAP`（Record<BlockEnum,..>，强制全量）+ `ICON_CONTAINER_BG_COLOR_MAP`）| 图标 `VariableX`（沿用聚合类外观），颜色 `indigo-500`（区分原 VariableAggregator 的 blue） |
+| ⑤ | `web/app/components/workflow/constants.ts:111-132` | `SUPPORT_OUTPUT_VARS_NODE` 加 `BlockEnum.EnsembleAggregator`，不加下游引用不到 `text/metadata` |
+| ⑥ | `web/app/components/workflow/nodes/_base/components/workflow-panel/last-run/use-last-run.ts:43,82` | `singleRunFormParamsHooks` 与 `getDataForCheckMoreHooks` 均为 `Record<BlockEnum, any>` — 两张表都补 `EnsembleAggregator: undefined`（P1.8 单节点 run 能力由 `canRunBySingle` 提供即可，不接 form-params hook） |
+| ⑦ | `web/app/components/workflow/nodes/_base/components/variable/utils.ts:2201-2207` | `getNodeOutputVars` switch 补 `case EnsembleAggregator: push [[id,"text"],[id,"metadata"]]`（与 panel 的 OutputVars 一致） |
+| ⑧ | `web/app/components/workflow/utils/workflow.ts:16-41` | `canRunBySingle` 末尾加 `|| === EnsembleAggregator` |
+| ⑨ | `web/i18n/{en-US,zh-Hans}/workflow.json` | 2 × `blocks.ensemble-aggregator` / 2 × `blocksAbout.ensemble-aggregator` + 26 条 `nodes.ensembleAggregator.*`（涵盖 panel/node/input-list/strategy-selector 所有 i18n 引用 + checkValid 的 4 条 errorMsg + pluralized `inputCount_one/_other`）|
+
+附加：
+- 删除 `ensemble-aggregator/default.ts` 里 P1.5 遗留的 `ENSEMBLE_AGGREGATOR_NODE_TYPE as unknown as BlockEnum` cast 与 `ENSEMBLE_AGGREGATOR_NODE_TYPE` 的专项 import，`genNodeMetaData({type: BlockEnum.EnsembleAggregator})` 直接用 enum
+- i18n JSON 两套 `python3 -c "import json; json.load(...)"` 均解析通过
+- 质量门 `pnpm type-check:tsgo` / `pnpm lint:fix` 延至 P1.7（本地 `web/node_modules` 缺失）；三处 `Record<BlockEnum, ...>` 的 TS strict 覆盖通过"每表都显式加 key"消除
+- **review round 1 修订（2026-04-22）**：初稿漏 `web/app/components/workflow/constants/node.ts` 的 `WORKFLOW_COMMON_NODES` 注册 → `useAvailableNodesMetaData().nodesMap` 不包含 `EnsembleAggregator`，画布"添加节点"实际创建不出。补加 `ensembleAggregatorDefault` 并在 `workflow-app/hooks/__tests__/use-available-nodes-meta-data.spec.ts` 加 `it.each([true, false])` 回归护栏
+- 详见 `docs/ModelNet/P1.6_LANDING.md`
 
 ### P1.7 前端质量门：pnpm type-check:tsgo + lint:fix 全绿
 

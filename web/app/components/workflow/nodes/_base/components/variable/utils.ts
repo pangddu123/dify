@@ -2204,6 +2204,12 @@ export const getNodeOutputVars = (
       res.push([id, 'last_record'])
       break
     }
+
+    case BlockEnum.EnsembleAggregator: {
+      res.push([id, 'text'])
+      res.push([id, 'metadata'])
+      break
+    }
   }
 
   return res

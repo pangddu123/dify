@@ -12,6 +12,8 @@ import DataSourceNode from './data-source/node'
 import DataSourcePanel from './data-source/panel'
 import DocExtractorNode from './document-extractor/node'
 import DocExtractorPanel from './document-extractor/panel'
+import EnsembleAggregatorNode from './ensemble-aggregator/node'
+import EnsembleAggregatorPanel from './ensemble-aggregator/panel'
 import EndNode from './end/node'
 import EndPanel from './end/panel'
 import HttpNode from './http/node'
@@ -66,6 +68,7 @@ export const NodeComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.VariableAssigner]: VariableAssignerNode,
   [BlockEnum.Assigner]: AssignerNode,
   [BlockEnum.VariableAggregator]: VariableAssignerNode,
+  [BlockEnum.EnsembleAggregator]: EnsembleAggregatorNode,
   [BlockEnum.ParameterExtractor]: ParameterExtractorNode,
   [BlockEnum.Iteration]: IterationNode,
   [BlockEnum.Loop]: LoopNode,
@@ -94,6 +97,7 @@ export const PanelComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.Tool]: ToolPanel,
   [BlockEnum.VariableAssigner]: VariableAssignerPanel,
   [BlockEnum.VariableAggregator]: VariableAssignerPanel,
+  [BlockEnum.EnsembleAggregator]: EnsembleAggregatorPanel,
   [BlockEnum.Assigner]: AssignerPanel,
   [BlockEnum.ParameterExtractor]: ParameterExtractorPanel,
   [BlockEnum.Iteration]: IterationPanel,

@@ -38,6 +38,7 @@ export const canRunBySingle = (nodeType: BlockEnum, isChildNode: boolean) => {
     || nodeType === BlockEnum.TriggerSchedule
     || nodeType === BlockEnum.TriggerWebhook
     || nodeType === BlockEnum.TriggerPlugin
+    || nodeType === BlockEnum.EnsembleAggregator
 }
 
 export const isSupportCustomRunForm = (nodeType: BlockEnum) => {
