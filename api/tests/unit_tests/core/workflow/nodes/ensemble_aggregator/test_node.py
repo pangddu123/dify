@@ -8,9 +8,6 @@ Covers:
 """
 
 import pytest
-from graphon.enums import WorkflowNodeExecutionStatus
-from graphon.node_events.node import StreamCompletedEvent
-from graphon.runtime.variable_pool import VariablePool
 
 from core.workflow.nodes.ensemble_aggregator import EnsembleAggregatorNode
 from core.workflow.nodes.ensemble_aggregator.exceptions import (
@@ -18,6 +15,9 @@ from core.workflow.nodes.ensemble_aggregator.exceptions import (
     StrategyConfigError,
     StrategyNotFoundError,
 )
+from graphon.enums import WorkflowNodeExecutionStatus
+from graphon.node_events.node import StreamCompletedEvent
+from graphon.runtime.variable_pool import VariablePool
 
 
 def _make_node(pool: VariablePool, node_data_payload: dict) -> EnsembleAggregatorNode:
