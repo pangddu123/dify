@@ -13,7 +13,6 @@ import {
   DropdownMenuTrigger,
 } from '@langgenius/dify-ui/dropdown-menu'
 import { Switch } from '@langgenius/dify-ui/switch'
-import { RiArrowDownSLine } from '@remixicon/react'
 import * as React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -90,9 +89,10 @@ const StrategySelector: FC<Props> = ({
           <span className="system-sm-regular text-components-input-text-filled">
             {t(`${i18nPrefix}.strategies.${strategyName}.label`, { ns: 'workflow' })}
           </span>
-          <RiArrowDownSLine
+          <span
+            aria-hidden
             className={cn(
-              'h-4 w-4 text-text-quaternary',
+              'i-ri-arrow-down-s-line h-4 w-4 text-text-quaternary',
               open && 'text-text-secondary',
             )}
           />

@@ -55,6 +55,16 @@ class TestAggregationInputRef:
                 }
             )
 
+    def test_source_id_leading_trailing_whitespace_is_stripped(self):
+        # Frontend dedup (default.ts) compares trimmed values — backend
+        # must normalize too, otherwise `"model_a"` and `"model_a "` survive
+        # as distinct contributions/keys and break majority_vote tie-break.
+        ref = AggregationInputRef(
+            source_id="  gpt4  ",
+            variable_selector=["node_a", "text"],
+        )
+        assert ref.source_id == "gpt4"
+
 
 class TestEnsembleAggregatorNodeData:
     @staticmethod
@@ -82,6 +92,19 @@ class TestEnsembleAggregatorNodeData:
                 inputs=[
                     {"source_id": "gpt4", "variable_selector": ["node_a", "text"]},
                     {"source_id": "gpt4", "variable_selector": ["node_b", "text"]},
+                ]
+            )
+        assert "Duplicate source_id" in str(exc.value)
+
+    def test_duplicate_source_id_rejected_after_trim(self):
+        # Regression for the frontend/backend divergence: `"gpt4"` and
+        # `"gpt4 "` must collide at the uniqueness guard because the
+        # field validator strips before the model-level check runs.
+        with pytest.raises(ValidationError) as exc:
+            EnsembleAggregatorNodeData(
+                inputs=[
+                    {"source_id": "gpt4", "variable_selector": ["node_a", "text"]},
+                    {"source_id": "gpt4 ", "variable_selector": ["node_b", "text"]},
                 ]
             )
         assert "Duplicate source_id" in str(exc.value)

@@ -17,9 +17,15 @@ class AggregationInputRef(BaseModel):
     @field_validator("source_id")
     @classmethod
     def _source_id_not_blank(cls, v: str) -> str:
-        if not v.strip():
+        stripped = v.strip()
+        if not stripped:
             raise ValueError("source_id must not be blank")
-        return v
+        # Normalize leading/trailing whitespace: the frontend dedup check
+        # (default.ts) compares trimmed values, but the uniqueness guard on
+        # this model runs against the raw value — without normalization,
+        # `"model_a"` and `"model_a "` would survive as distinct keys in
+        # `metadata.contributions` and diverge majority_vote tie-break.
+        return stripped
 
     @field_validator("variable_selector")
     @classmethod

@@ -515,6 +515,7 @@
   "nodes.ensembleAggregator.errorMsg.labelMustBeBoolean": "\"include_source_label\" must be a boolean",
   "nodes.ensembleAggregator.errorMsg.separatorMustBeString": "\"separator\" must be a string",
   "nodes.ensembleAggregator.errorMsg.unknownStrategyConfigKey": "Unknown config key \"{{key}}\" for strategy \"{{strategy}}\"",
+  "nodes.ensembleAggregator.errorMsg.unknownStrategyName": "Unknown aggregation strategy \"{{strategy}}\"",
   "nodes.ensembleAggregator.inputCount_one": "{{count}} input",
   "nodes.ensembleAggregator.inputCount_other": "{{count}} inputs",
   "nodes.ensembleAggregator.inputs": "Inputs",

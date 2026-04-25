@@ -8,6 +8,7 @@ const withMDX = createMDX()
 
 const nextConfig: NextConfig = {
   basePath: env.NEXT_PUBLIC_BASE_PATH,
+  allowedDevOrigins: ['127.0.0.1', 'localhost', '192.168.1.25'],
   transpilePackages: ['@t3-oss/env-core', '@t3-oss/env-nextjs', 'echarts', 'zrender'],
   turbopack: {
     rules: codeInspectorPlugin({
@@ -28,6 +29,16 @@ const nextConfig: NextConfig = {
         destination: '/apps',
         permanent: false,
       },
+    ]
+  },
+  async rewrites() {
+    if (!isDev)
+      return []
+    return [
+      { source: '/console/api/:path*', destination: 'http://127.0.0.1:9120/console/api/:path*' },
+      { source: '/api/:path*', destination: 'http://127.0.0.1:9120/api/:path*' },
+      { source: '/v1/:path*', destination: 'http://127.0.0.1:9120/v1/:path*' },
+      { source: '/files/:path*', destination: 'http://127.0.0.1:9120/files/:path*' },
     ]
   },
   output: 'standalone',

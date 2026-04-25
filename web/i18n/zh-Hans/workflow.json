@@ -515,6 +515,7 @@
   "nodes.ensembleAggregator.errorMsg.labelMustBeBoolean": "\"include_source_label\" 必须是布尔值",
   "nodes.ensembleAggregator.errorMsg.separatorMustBeString": "\"separator\" 必须是字符串",
   "nodes.ensembleAggregator.errorMsg.unknownStrategyConfigKey": "策略 \"{{strategy}}\" 不支持的配置项 \"{{key}}\"",
+  "nodes.ensembleAggregator.errorMsg.unknownStrategyName": "不支持的聚合策略 \"{{strategy}}\"",
   "nodes.ensembleAggregator.inputCount_one": "{{count}} 路输入",
   "nodes.ensembleAggregator.inputCount_other": "{{count}} 路输入",
   "nodes.ensembleAggregator.inputs": "输入",

@@ -1,0 +1,367 @@
+app:
+  description: 'ModelNet Phase 1 demo — response-level ensemble (advanced-chat mode).
+
+
+    Three LLMs answer the same user query (`{{#sys.query#}}`) from different
+    perspectives (concise / creative / step-by-step). The ensemble-aggregator
+    concatenates their outputs (with per-source labels) and the Answer node
+    streams the merged text to the chat UI.
+
+
+    Switch `strategy_name` to `majority_vote` to experiment with vote-based
+    aggregation on the same graph (short-answer prompts work best there).'
+  icon: 🤝
+  icon_background: '#E0E7FF'
+  mode: advanced-chat
+  name: response_level_ensemble (chat)
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/openai:0.0.30@1f5ecdef108418a467e54da2dcf5de2cf22b47632abc8633194ac9fb96317ede
+kind: app
+version: 0.3.1
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        image_file_size_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: 'Ask me anything — you will get three perspectives merged
+      into one reply.'
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: start-to-llm-a
+      source: start_node
+      sourceHandle: source
+      target: llm_a
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: start-to-llm-b
+      source: start_node
+      sourceHandle: source
+      target: llm_b
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: start-to-llm-c
+      source: start_node
+      sourceHandle: source
+      target: llm_c
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: ensemble-aggregator
+      id: llm-a-to-aggregator
+      source: llm_a
+      sourceHandle: source
+      target: aggregator
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: ensemble-aggregator
+      id: llm-b-to-aggregator
+      source: llm_b
+      sourceHandle: source
+      target: aggregator
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: ensemble-aggregator
+      id: llm-c-to-aggregator
+      source: llm_c
+      sourceHandle: source
+      target: aggregator
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: ensemble-aggregator
+        targetType: answer
+      id: aggregator-to-answer
+      source: aggregator
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: ''
+        selected: false
+        title: Start
+        type: start
+        variables: []
+      height: 54
+      id: start_node
+      position:
+        x: 30
+        y: 252
+      positionAbsolute:
+        x: 30
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: Concise answer perspective.
+        memory:
+          query_prompt_template: '{{#sys.query#}}
+
+
+            {{#sys.files#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            temperature: 0.3
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: 9c4f4c3a-0001-4b11-9d10-aaaaaaaaaaaa
+          role: system
+          text: 'You are a terse expert. Reply in 1–2 sentences with the most
+            important fact. No preamble.'
+        selected: false
+        title: LLM A (concise)
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: llm_a
+      position:
+        x: 334
+        y: 100
+      positionAbsolute:
+        x: 334
+        y: 100
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: Creative / elaborated answer perspective.
+        memory:
+          query_prompt_template: '{{#sys.query#}}
+
+
+            {{#sys.files#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            temperature: 0.9
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: 9c4f4c3a-0002-4b12-9d11-aaaaaaaaaaaa
+          role: system
+          text: "You are a creative essayist. Answer with a vivid analogy and a\
+            \ short illustrative example. 3–4 sentences."
+        selected: false
+        title: LLM B (creative)
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: llm_b
+      position:
+        x: 334
+        y: 252
+      positionAbsolute:
+        x: 334
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: Step-by-step answer perspective.
+        memory:
+          query_prompt_template: '{{#sys.query#}}
+
+
+            {{#sys.files#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            temperature: 0.2
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: 9c4f4c3a-0003-4b13-9d12-aaaaaaaaaaaa
+          role: system
+          text: 'You are a structured tutor. Reply as a numbered 3-step procedure.
+            Each step one sentence.'
+        selected: false
+        title: LLM C (steps)
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: llm_c
+      position:
+        x: 334
+        y: 404
+      positionAbsolute:
+        x: 334
+        y: 404
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: Concatenate the three perspectives with a per-source label header
+          and the default `\n\n---\n\n` separator.
+        inputs:
+        - source_id: concise
+          variable_selector:
+          - llm_a
+          - text
+        - source_id: creative
+          variable_selector:
+          - llm_b
+          - text
+        - source_id: steps
+          variable_selector:
+          - llm_c
+          - text
+        selected: false
+        strategy_config:
+          include_source_label: true
+        strategy_name: concat
+        title: Ensemble Aggregator
+        type: ensemble-aggregator
+      height: 150
+      id: aggregator
+      position:
+        x: 638
+        y: 252
+      positionAbsolute:
+        x: 638
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        answer: '{{#aggregator.text#}}'
+        desc: Render the aggregated response to the chat UI.
+        selected: false
+        title: Answer
+        type: answer
+        variables: []
+      height: 105
+      id: answer
+      position:
+        x: 942
+        y: 252
+      positionAbsolute:
+        x: 942
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.7

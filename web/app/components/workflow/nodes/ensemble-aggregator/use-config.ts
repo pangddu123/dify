@@ -1,4 +1,4 @@
-import type { Var, ValueSelector } from '../../types'
+import type { ValueSelector, Var } from '../../types'
 import type {
   AggregationInputRef,
   ConcatConfig,
@@ -8,7 +8,6 @@ import type {
 import { produce } from 'immer'
 import { useCallback } from 'react'
 import { useNodesReadOnly } from '@/app/components/workflow/hooks'
-import useAvailableVarList from '@/app/components/workflow/nodes/_base/hooks/use-available-var-list'
 import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
 import { VarType } from '../../types'
 
@@ -36,10 +35,10 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
     return TEXT_COMPATIBLE_VAR_TYPES.includes(varPayload.type)
   }, [])
 
-  const { availableVars, availableNodesWithParent } = useAvailableVarList(id, {
-    onlyLeafNodeVar: false,
-    filterVar: filterStringVar,
-  })
+  // `VarReferencePicker` (used inside `InputList`) runs its own
+  // `useAvailableVarList` when rendered, so computing/returning the list
+  // here is a redundant walk of the graph. Keep only `filterStringVar`,
+  // which the picker needs via props.
 
   const nextDefaultSourceId = useCallback((refs: AggregationInputRef[]) => {
     // Stable alias naming: `model_1`, `model_2`, … — user is expected to
@@ -122,8 +121,6 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
   return {
     readOnly,
     inputs,
-    availableVars,
-    availableNodesWithParent,
     filterStringVar,
     handleAddInput,
     handleRemoveInput,

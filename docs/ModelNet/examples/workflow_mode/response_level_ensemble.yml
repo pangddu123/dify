@@ -1,0 +1,360 @@
+app:
+  description: 'ModelNet Phase 1 demo — response-level ensemble (workflow mode).
+
+
+    Three LLMs independently classify the sentiment of the input `query` as
+    positive / negative / neutral. The ensemble-aggregator then picks the
+    majority vote and exposes it as `text`; End outputs `label`.
+
+
+    Swap `strategy_name` to `concat` (and clear `strategy_config` or set
+    `separator` / `include_source_label`) to test the concat strategy on the
+    same graph.'
+  icon: 🤝
+  icon_background: '#E0E7FF'
+  mode: workflow
+  name: response_level_ensemble (workflow)
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/openai:0.0.30@1f5ecdef108418a467e54da2dcf5de2cf22b47632abc8633194ac9fb96317ede
+kind: app
+version: 0.3.1
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: start-to-llm-a
+      source: start_node
+      sourceHandle: source
+      target: llm_a
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: start-to-llm-b
+      source: start_node
+      sourceHandle: source
+      target: llm_b
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: llm
+      id: start-to-llm-c
+      source: start_node
+      sourceHandle: source
+      target: llm_c
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: ensemble-aggregator
+      id: llm-a-to-aggregator
+      source: llm_a
+      sourceHandle: source
+      target: aggregator
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: ensemble-aggregator
+      id: llm-b-to-aggregator
+      source: llm_b
+      sourceHandle: source
+      target: aggregator
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: llm
+        targetType: ensemble-aggregator
+      id: llm-c-to-aggregator
+      source: llm_c
+      sourceHandle: source
+      target: aggregator
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: ensemble-aggregator
+        targetType: end
+      id: aggregator-to-end
+      source: aggregator
+      sourceHandle: source
+      target: end_node
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        desc: User sentiment query routed to three classifier LLMs.
+        selected: false
+        title: Start
+        type: start
+        variables:
+        - label: query
+          max_length: 512
+          options: []
+          required: true
+          type: paragraph
+          variable: query
+      height: 90
+      id: start_node
+      position:
+        x: 30
+        y: 252
+      positionAbsolute:
+        x: 30
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: Classifier A (temp 0).
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            temperature: 0
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: 8b3e3b2c-0001-4a10-9d01-aaaaaaaaaaaa
+          role: system
+          text: "You are a strict sentiment classifier. Read the user input and\
+            \ reply with exactly ONE lowercase word from the set {positive, negative,\
+            \ neutral}. Do not add punctuation, quotes, explanations, or whitespace."
+        - id: 8b3e3b2c-0001-4a10-9d01-bbbbbbbbbbbb
+          role: user
+          text: '{{#start_node.query#}}'
+        selected: false
+        title: LLM A
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: llm_a
+      position:
+        x: 334
+        y: 100
+      positionAbsolute:
+        x: 334
+        y: 100
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: Classifier B (temp 0).
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            temperature: 0
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: 8b3e3b2c-0002-4a10-9d02-aaaaaaaaaaaa
+          role: system
+          text: "Classify the sentiment of the user input. Respond with exactly\
+            \ ONE of: positive, negative, neutral. Lowercase. No extra tokens."
+        - id: 8b3e3b2c-0002-4a10-9d02-bbbbbbbbbbbb
+          role: user
+          text: '{{#start_node.query#}}'
+        selected: false
+        title: LLM B
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: llm_b
+      position:
+        x: 334
+        y: 252
+      positionAbsolute:
+        x: 334
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        desc: Classifier C (temp 0).
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params:
+            temperature: 0
+          mode: chat
+          name: gpt-4o-mini
+          provider: langgenius/openai/openai
+        prompt_template:
+        - id: 8b3e3b2c-0003-4a10-9d03-aaaaaaaaaaaa
+          role: system
+          text: "Return only one of these three lowercase labels describing the\
+            \ user's sentiment: positive | negative | neutral. Nothing else."
+        - id: 8b3e3b2c-0003-4a10-9d03-bbbbbbbbbbbb
+          role: user
+          text: '{{#start_node.query#}}'
+        selected: false
+        title: LLM C
+        type: llm
+        variables: []
+        vision:
+          enabled: false
+      height: 90
+      id: llm_c
+      position:
+        x: 334
+        y: 404
+      positionAbsolute:
+        x: 334
+        y: 404
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: Majority vote across the three classifier LLMs. Ties are broken
+          deterministically by lexicographic order on `source_id`.
+        inputs:
+        - source_id: model_a
+          variable_selector:
+          - llm_a
+          - text
+        - source_id: model_b
+          variable_selector:
+          - llm_b
+          - text
+        - source_id: model_c
+          variable_selector:
+          - llm_c
+          - text
+        selected: false
+        strategy_config: {}
+        strategy_name: majority_vote
+        title: Ensemble Aggregator
+        type: ensemble-aggregator
+      height: 150
+      id: aggregator
+      position:
+        x: 638
+        y: 252
+      positionAbsolute:
+        x: 638
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    - data:
+        desc: Emit the majority-voted sentiment label.
+        outputs:
+        - value_selector:
+          - aggregator
+          - text
+          value_type: string
+          variable: label
+        - value_selector:
+          - aggregator
+          - metadata
+          value_type: object
+          variable: metadata
+        selected: false
+        title: End
+        type: end
+      height: 116
+      id: end_node
+      position:
+        x: 942
+        y: 252
+      positionAbsolute:
+        x: 942
+        y: 252
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 244
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.7

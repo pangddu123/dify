@@ -205,21 +205,28 @@ Phase 3 测试文档  ──► 收尾
 - **review round 1 修订（2026-04-22）**：初稿漏 `web/app/components/workflow/constants/node.ts` 的 `WORKFLOW_COMMON_NODES` 注册 → `useAvailableNodesMetaData().nodesMap` 不包含 `EnsembleAggregator`，画布"添加节点"实际创建不出。补加 `ensembleAggregatorDefault` 并在 `workflow-app/hooks/__tests__/use-available-nodes-meta-data.spec.ts` 加 `it.each([true, false])` 回归护栏
 - 详见 `docs/ModelNet/P1.6_LANDING.md`
 
-### P1.7 前端质量门：pnpm type-check:tsgo + lint:fix 全绿
+### P1.7 前端质量门：pnpm type-check:tsgo + lint:fix 全绿 ✅
 
 在 `web/` 跑 `pnpm type-check:tsgo` 和 `pnpm lint:fix`。重点核对：
 
 - ⑥ `singleRunFormParamsHooks` 的 `Record<BlockEnum, any>` 必须覆盖新枚举值，否则 TS strict 直接报错
 - 新增 i18n key 两套（en-US / zh-Hans）必须对齐
 
-### P1.8 联调：dev server 跑通 workflow + chat 模式；写 2 份 DSL
+**落地结果（2026-04-22）**：`pnpm install` 成功；`tsgo` 0 error；`eslint --fix` 0 error（27 warning 全部为仓库历史遗留或 P1.5 scaffolding 层面，计入后续 polish）；`pnpm test ...use-available-nodes-meta-data.spec.ts` 4/4 通过；en-US / zh-Hans `nodes.ensembleAggregator.*` + `blocks(.About).ensemble-aggregator` 键集 27 个完全对齐。唯一实质代码改动：`ensemble-aggregator/default.ts:22` 把 `t: any` 换成 i18next 风格 `(key, options?) => string`（兄弟节点的 `t: any` 在 `eslint-suppressions.json` 里被抑制，我方新文件没进抑制表，正面修更干净）。另外两个文件的改动是 eslint 自动排序 import。详见 `docs/ModelNet/P1.7_LANDING.md`。
 
-起 dev server，画布上拖出 ensemble-aggregator 节点。
+### 🚧 P1.8 联调：dev server 跑通 workflow + chat 模式；写 2 份 DSL — **静态完成 / 浏览器回归待执行**（2026-04-24）
 
-- **workflow 模式**：`Start(query) → 3 LLM → Aggregator → End(text)`，跑 majority_vote + concat 两策略
-- **chat 模式**：`Start → 3 LLM → Aggregator → Answer({{aggregator.text}})`，浏览器看到聚合文本
-- 导出 DSL 到 `docs/ModelNet/examples/workflow_mode/response_level_ensemble.yml` 与 `docs/ModelNet/examples/chat_mode/response_level_ensemble.yml`
-- chat DSL 通过 `validateDSLContent(content, AppModeEnum.ADVANCED_CHAT)`（不含 End）
+> **状态说明**：P1.8 的核心动作是"联调"（起 dev server、画布拖节点、浏览器看流式），这部分尚未由本轮 Agent 执行；本轮仅完成 2 份 DSL 落位 + 静态契约验证 + graphon 注册链路验证。浏览器 E2E 需要用户在本机 dev 环境手动跑一遍后，才能把本节改为 ✅ 完整完成。静态部分见下列证据；浏览器回归命令见 `docs/ModelNet/P1.8_LANDING.md` §4.1。
+
+落地范围（静态部分）：2 份响应级 DSL 编写 + 静态契约验证 + 注册链路校验；浏览器 E2E 回归由用户在本机 dev server 完成（本环境 :3000 被 open-webui 占用、无独立 Dify 栈，起 docker-compose 有污染共享容器风险，按 CLAUDE.md "Executing actions with care" 规则不自启）。
+
+- **workflow DSL**：`docs/ModelNet/examples/workflow_mode/response_level_ensemble.yml` — `start → [llm_a, llm_b, llm_c] → aggregator(majority_vote) → end`；三路情感分类器（temp=0）输出 positive/negative/neutral 单词，End 导出 `label` + `metadata`；切 `concat` 只需改 `strategy_name` + `strategy_config` 两字段
+- **chat DSL**：`docs/ModelNet/examples/chat_mode/response_level_ensemble.yml` — `start → [llm_a, llm_b, llm_c] → aggregator(concat + include_source_label=true) → answer`；三风格答复（concise/creative/steps）加源标签拼接流给 Answer；opening_statement 已设
+- **静态验证全绿**：(1) 两份 YAML `EnsembleAggregatorNodeData.model_validate` 通过（source_id 唯一、selector 段非空、inputs ≥2、strategy_config extra="forbid" 不违反）；(2) 前端等价 `validateDSLContent` 模式检查：workflow DSL 无 answer、chat DSL 无 end/trigger-*；(3) 策略实际执行预演（majority_vote 三票→positive；concat include_source_label 输出 `[concise]...[creative]...[steps]...` + 默认分隔符 `\n\n---\n\n`）；(4) `register_nodes()` 后 `Node._registry["ensemble-aggregator"]["1"] is EnsembleAggregatorNode`
+- **无回归**：`uv run --project api pytest api/tests/unit_tests/core/workflow/nodes/ensemble_aggregator/ -v -o addopts=""` → 45/45 绿
+- **两份 DSL 各用一种策略而非都跑两种**：majority_vote 本质是"完全相同字符串投票"，chat 模式三路长文几乎不可能字面相同 → 永远退化成字典序 tie-break，示例效果反向误导；concat 两模式都能跑，但放 chat + include_source_label 肉眼最能看出"多模型融合"效果。两份 DSL 顶部注释都写了如何切到另一种策略（单字段替换）
+- **用户本地浏览器回归命令**：`pnpm dev` (web) + `uv run --project api flask run` (api) + `docker compose -f docker-compose.middleware.yaml up -d` (数据库/Redis) → 创建 workflow / advanced-chat 应用 → Import DSL → 跑一遍
+- 详见 `docs/ModelNet/P1.8_LANDING.md`
 
 ---
 

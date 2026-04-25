@@ -1,0 +1,45 @@
+# Repo-root .dockerignore — applies to the `web` image build context
+# (web/Dockerfile uses the repo root as context to pull pnpm workspace
+# manifests). `api/` has its own .dockerignore scoped to its own context.
+
+# Runtime container state — some dirs (e.g. docker/volumes/db/data/pgdata)
+# are owned by root inside running containers and unreadable to the build
+# daemon, which aborts the build with `permission denied`.
+docker/volumes
+
+# Python virtualenvs and local storage — not needed for the web build,
+# and may contain user-specific paths.
+api/.venv
+api/storage
+api/logs
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Node build artifacts — re-generated inside the Dockerfile.
+node_modules
+**/node_modules
+web/.next
+web/dist
+web/out
+packages/**/dist
+packages/**/.next
+
+# VCS / IDE / OS junk — no build impact, just reduces context size.
+.git
+.github
+.idea
+.vscode
+.DS_Store
+*.log
+
+# Docs — unused at build time, keeps context small.
+docs
+docker-legacy
+
+# Local env files that may leak secrets into layers.
+.env
+**/.env
+**/.env.*
+!**/.env.example

@@ -1,8 +1,9 @@
 import type { NodeDefault } from '../../types'
-import type { EnsembleAggregatorNodeType } from './types'
+import type { EnsembleAggregatorNodeType, EnsembleStrategyName } from './types'
 import { BlockClassificationEnum } from '@/app/components/workflow/block-selector/types'
 import { BlockEnum } from '@/app/components/workflow/types'
 import { genNodeMetaData } from '@/app/components/workflow/utils'
+import { ENSEMBLE_STRATEGY_NAMES } from './types'
 
 const i18nPrefix = 'nodes.ensembleAggregator'
 
@@ -19,7 +20,7 @@ const nodeDefault: NodeDefault<EnsembleAggregatorNodeType> = {
     strategy_name: 'majority_vote',
     strategy_config: {},
   },
-  checkValid(payload: EnsembleAggregatorNodeType, t: any) {
+  checkValid(payload: EnsembleAggregatorNodeType, t: (key: string, options?: Record<string, unknown>) => string) {
     const { inputs, strategy_name, strategy_config } = payload
     let errorMessages = ''
 
@@ -59,16 +60,30 @@ const nodeDefault: NodeDefault<EnsembleAggregatorNodeType> = {
       }
     }
 
+    // Defense-in-depth: runtime payloads from DSL import or legacy
+    // snapshots are not TypeScript-checked, so an unknown strategy_name
+    // must be surfaced here before the config-key guard runs (which would
+    // otherwise silently fall through to `[]` and accept an empty config).
+    if (!errorMessages) {
+      const known = new Set<EnsembleStrategyName>(ENSEMBLE_STRATEGY_NAMES)
+      if (!known.has(strategy_name as EnsembleStrategyName)) {
+        errorMessages = t(`${i18nPrefix}.errorMsg.unknownStrategyName`, {
+          ns: 'workflow',
+          strategy: String(strategy_name),
+        })
+      }
+    }
+
     // Mirror backend `extra="forbid"` on each strategy's config schema;
     // without this, DSL imports with stray keys pass the frontend and
     // only fail at run time inside StrategyConfigError.
     if (!errorMessages) {
       const cfg = (strategy_config ?? {}) as Record<string, unknown>
-      const allowedKeysByStrategy: Record<string, readonly string[]> = {
+      const allowedKeysByStrategy: Record<EnsembleStrategyName, readonly string[]> = {
         majority_vote: [],
         concat: ['separator', 'include_source_label'],
       }
-      const allowed = new Set(allowedKeysByStrategy[strategy_name] ?? [])
+      const allowed = new Set(allowedKeysByStrategy[strategy_name])
       const unknownKey = Object.keys(cfg).find(k => !allowed.has(k))
       if (unknownKey) {
         errorMessages = t(`${i18nPrefix}.errorMsg.unknownStrategyConfigKey`, {
