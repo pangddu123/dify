@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any
 
 import yaml
 from pydantic import ValidationError
@@ -36,7 +36,7 @@ from ..exceptions import (
     UnknownBackendError,
     UnknownModelAliasError,
 )
-from ..spi.backend import BaseSpec
+from ..spi.backend import BackendInfo, BaseSpec
 from .backend_registry import BackendRegistry
 
 logger = logging.getLogger(__name__)
@@ -45,21 +45,17 @@ API_ROOT = Path(__file__).resolve().parents[5]
 DEFAULT_REGISTRY_PATH = str(API_ROOT / "configs" / "model_net.yaml")
 
 
-class AliasInfo(TypedDict):
-    """Public projection returned by :meth:`ModelRegistry.list_aliases`.
-
-    Carries the bare minimum the console / dropdown needs. URL and any
-    backend-specific secrets stay server-side (ADR-3).
-
-    ``type`` is preserved (despite being llama_cpp-specific) for
-    backwards compat with P2.1's ``AliasInfo``; backends that lack the
-    notion populate with ``"normal"``.
-    """
-
-    id: str
-    backend: str
-    model_name: str
-    type: Literal["normal", "think"]
+# P2.3: ``list_aliases`` now returns the SPI's ``BackendInfo`` shape so
+# the console API (P2.4) and the per-backend capability matrix
+# (BACKEND_CAPABILITIES.md) stay aligned across one TypedDict.
+#
+# ⚠️ Import-name compatibility ONLY. The runtime shape changed:
+# P2.1 was ``{id, backend, model_name, type}``; P2.3 is
+# ``{id, backend, model_name, capabilities, metadata}``. Code that
+# read ``info["type"]`` must migrate to ``info["metadata"].get("type")``
+# — re-exporting the name avoids a noisy import diff for callers that
+# only used the type for annotations, not field access.
+AliasInfo = BackendInfo
 
 
 class ModelRegistry:
@@ -182,25 +178,33 @@ class ModelRegistry:
         except KeyError as exc:
             raise UnknownModelAliasError(alias) from exc
 
-    def list_aliases(self) -> list[AliasInfo]:
+    def list_aliases(self) -> list[BackendInfo]:
         """Public projection for the console API + frontend dropdown.
 
-        Backend-specific fields stay private; only the four UI-relevant
-        bits ship out. ``type`` defaults to ``"normal"`` for backends
-        that do not model the think/normal split — keeps the TypedDict
-        shape stable across backends.
+        Returns ``BackendInfo`` per spec so the console (P2.4) gets the
+        same shape across every backend. URL / api_key / api_key_env
+        never leave this method — that is the SSRF / credential
+        boundary against the DSL layer (T2). Today only llama.cpp's
+        ``type`` (normal / think) flows through ``metadata``; the field
+        is the documented hook for any future non-secret extra a
+        backend wants the dropdown to render without expanding the
+        TypedDict.
         """
-        out: list[AliasInfo] = []
+        out: list[BackendInfo] = []
         for spec in self._models.values():
-            # Two-branch literal narrowing keeps mypy + basedpyright happy
-            # without a cast: each arm is statically a Literal member.
-            spec_type: Literal["normal", "think"] = "think" if getattr(spec, "type", None) == "think" else "normal"
+            backend_cls = BackendRegistry.get(spec.backend)
+            capabilities = sorted(cap.value for cap in backend_cls.capabilities(spec))
+            metadata: dict[str, Any] = {}
+            spec_type = getattr(spec, "type", None)
+            if spec_type is not None:
+                metadata["type"] = spec_type
             out.append(
-                AliasInfo(
+                BackendInfo(
                     id=spec.id,
                     backend=spec.backend,
                     model_name=spec.model_name,
-                    type=spec_type,
+                    capabilities=capabilities,
+                    metadata=metadata,
                 )
             )
         return out

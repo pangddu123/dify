@@ -100,7 +100,10 @@ def test_list_aliases_omits_url(tmp_path):
         # Critical SSRF defense (T2): URL must never cross the API boundary.
         assert "model_url" not in info
         assert "url" not in info
-        assert set(info.keys()) == {"id", "backend", "model_name", "type"}
+        # P2.3: list_aliases now returns the SPI BackendInfo shape so the
+        # P2.4 console API can ship the same dict the frontend dropdown
+        # consumes — capabilities + metadata replace the legacy ``type``.
+        assert set(info.keys()) == {"id", "backend", "model_name", "capabilities", "metadata"}
 
 
 # ── Smoke 4: unknown alias raises typed error ─────────────────────────
