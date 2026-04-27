@@ -117,9 +117,7 @@ class ResponseAggregationResult(TypedDict):
     metadata: dict
 
 
-class ResponseAggregator(
-    Aggregator[ConfigT, list[ResponseSignal], ResponseAggregationResult]
-):
+class ResponseAggregator(Aggregator[ConfigT, list[ResponseSignal], ResponseAggregationResult]):
     """Typed base for response-scope aggregators (P1 majority_vote / concat fit here)."""
 
     scope: ClassVar[str] = "response"

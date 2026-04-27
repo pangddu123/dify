@@ -142,8 +142,7 @@ class EnsembleRunner[ConfigT: BaseModel](ABC):
         for field, decl in schema.items():
             if not isinstance(decl, dict):
                 raise TypeError(
-                    f"runner '{cls.__name__}' ui_schema['{field}'] must be a dict, "
-                    f"got {type(decl).__name__}"
+                    f"runner '{cls.__name__}' ui_schema['{field}'] must be a dict, got {type(decl).__name__}"
                 )
             control = decl.get("control")
             if control not in UI_CONTROL_ALLOWLIST:

@@ -73,9 +73,7 @@ class EchoBackend(ModelBackend):
         return frozenset({Capability.STREAMING})
 
     @classmethod
-    def validate_requirements(
-        cls, spec: BaseSpec, requirements: list[Requirement]
-    ) -> list[ValidationIssue]:
+    def validate_requirements(cls, spec: BaseSpec, requirements: list[Requirement]) -> list[ValidationIssue]:
         return []
 
     def generate(self, prompt: str, params: GenerationParams) -> GenerationResult:
@@ -276,17 +274,20 @@ class TestSpiTypeInvariants:
 
     def test_ui_control_allowlist_is_frozen_set(self):
         assert isinstance(UI_CONTROL_ALLOWLIST, frozenset)
-        assert frozenset(
-            {
-                "number_input",
-                "text_input",
-                "textarea",
-                "switch",
-                "select",
-                "multi_select",
-                "model_alias_select",
-            }
-        ) == UI_CONTROL_ALLOWLIST
+        assert (
+            frozenset(
+                {
+                    "number_input",
+                    "text_input",
+                    "textarea",
+                    "switch",
+                    "select",
+                    "multi_select",
+                    "model_alias_select",
+                }
+            )
+            == UI_CONTROL_ALLOWLIST
+        )
 
     def test_diagnostics_config_extra_forbid(self):
         from pydantic import ValidationError

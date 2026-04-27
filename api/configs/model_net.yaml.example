@@ -1,0 +1,56 @@
+# ModelNet model registry — sample config.
+#
+# Copy to api/configs/model_net.yaml and edit. The real file is
+# .gitignore'd so internal endpoints never reach the repo. The path is
+# overridable via the MODEL_NET_REGISTRY_PATH env var (see
+# api/configs/feature/__init__.py).
+#
+# Each entry is one self-hosted llama.cpp endpoint. The aliases below
+# (`id`) are what workflow DSLs reference; the URL stays server-side
+# and is never returned by the console aliases endpoint (ADR-3).
+#
+# Schema is enforced by parallel_ensemble.backends.llama_cpp.LlamaCppSpec
+# with extra="forbid", so unknown keys reject the file at boot.
+#
+# Field reference (llama_cpp backend):
+#   id              str, required, registry alias used in workflow DSL.
+#   backend         "llama_cpp" required — discriminator.
+#   model_name      str, required, free-form display name.
+#   model_arch      "llama" default; informational.
+#   model_url       full base URL of the llama.cpp server (no trailing slash).
+#   EOS             end-of-stream token string (e.g. "<|end_of_text|>").
+#   type            "normal" or "think". think models run a stop_think
+#                   pre-pass before token-step voting.
+#   stop_think      string fed as `stop` for the think pre-pass; use
+#                   "<|None|>" for non-think entries (ignored).
+#   weight          float > 0, default 1.0; used by token-step aggregator.
+#   request_timeout_ms  int > 0, default 30000.
+
+models:
+  - id: "0"
+    backend: llama_cpp
+    model_name: gpt-oss-20b-mxfp4
+    model_arch: llama
+    model_url: http://10.0.0.1:31136
+    EOS: "<|end|>"
+    type: think
+    stop_think: "final<|message|>"
+
+  - id: "1"
+    backend: llama_cpp
+    model_name: qwen3-4b-bf16
+    model_arch: llama
+    model_url: http://10.0.0.1:30763
+    EOS: "<|im_end|>"
+    type: think
+    stop_think: "</think>"
+
+  - id: "2"
+    backend: llama_cpp
+    model_name: llama-31-8b
+    model_arch: llama
+    model_url: http://10.0.0.1:30431
+    EOS: "<|end_of_text|>"
+    type: normal
+    stop_think: "<|None|>"
+    weight: 1.5

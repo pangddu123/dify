@@ -57,10 +57,7 @@ def register_aggregator(name: str, *, scope: str):
     def deco(agg_cls: type[Aggregator]) -> type[Aggregator]:
         declared = getattr(agg_cls, "scope", None)
         if declared != scope:
-            raise ValueError(
-                f"aggregator '{name}' decorator scope={scope!r} disagrees "
-                f"with class scope={declared!r}"
-            )
+            raise ValueError(f"aggregator '{name}' decorator scope={scope!r} disagrees with class scope={declared!r}")
         agg_cls.name = name
         AggregatorRegistry.register(name, agg_cls)
         return agg_cls

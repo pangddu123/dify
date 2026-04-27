@@ -41,9 +41,7 @@ class CapabilityNotSupportedError(ParallelEnsembleError):
     def __init__(self, backend_name: str, capability_name: str):
         self.backend_name = backend_name
         self.capability_name = capability_name
-        super().__init__(
-            f"Backend '{backend_name}' does not support capability '{capability_name}'"
-        )
+        super().__init__(f"Backend '{backend_name}' does not support capability '{capability_name}'")
 
 
 # Legacy alias — EXTENSIBILITY_SPEC v0.2 documents the class as

@@ -1373,6 +1373,28 @@ class SandboxExpiredRecordsCleanConfig(BaseSettings):
     )
 
 
+class ModelNetConfig(BaseSettings):
+    """ModelNet (parallel-ensemble node) registry + executor configuration.
+
+    Lives next to other workflow configs so it is included in
+    ``FeatureConfig`` and reachable as ``dify_config.MODEL_NET_*``.
+    """
+
+    MODEL_NET_REGISTRY_PATH: str = Field(
+        description="Path to the ModelNet model registry yaml. Real values "
+        "(self-hosted endpoints) must live in this file and not be checked "
+        "into git; missing file is tolerated and yields an empty registry "
+        "with a warning at boot. Override via env when deploying.",
+        default="api/configs/model_net.yaml",
+    )
+
+    PARALLEL_ENSEMBLE_MAX_WORKERS: PositiveInt = Field(
+        description="Max workers in the per-node ThreadPoolExecutor a "
+        "parallel-ensemble runner uses to fan out across backends.",
+        default=8,
+    )
+
+
 class FeatureConfig(
     # place the configs in alphabet order
     AppExecutionConfig,
@@ -1393,6 +1415,7 @@ class FeatureConfig(
     LoggingConfig,
     MailConfig,
     ModelLoadBalanceConfig,
+    ModelNetConfig,
     ModerationConfig,
     MultiModalTransferConfig,
     PositionConfig,

@@ -194,9 +194,7 @@ class ModelRegistry:
         for spec in self._models.values():
             # Two-branch literal narrowing keeps mypy + basedpyright happy
             # without a cast: each arm is statically a Literal member.
-            spec_type: Literal["normal", "think"] = (
-                "think" if getattr(spec, "type", None) == "think" else "normal"
-            )
+            spec_type: Literal["normal", "think"] = "think" if getattr(spec, "type", None) == "think" else "normal"
             out.append(
                 AliasInfo(
                     id=spec.id,
@@ -214,10 +212,7 @@ class ModelRegistry:
         return len(self._models)
 
     def __repr__(self) -> str:
-        return (
-            f"ModelRegistry(source={self._source_path!r}, "
-            f"aliases={list(self._models.keys())})"
-        )
+        return f"ModelRegistry(source={self._source_path!r}, aliases={list(self._models.keys())})"
 
 
 # ── Backwards-compat alias ──────────────────────────────────────────────

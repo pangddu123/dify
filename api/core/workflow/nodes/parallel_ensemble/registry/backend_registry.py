@@ -46,10 +46,7 @@ class BackendRegistry:
             raise DuplicateRegistrationError("backend", name)
         spec_class = getattr(backend_cls, "spec_class", None)
         if spec_class is None or not isinstance(spec_class, type) or not issubclass(spec_class, BaseSpec):
-            raise TypeError(
-                f"backend '{name}' spec_class must be a BaseSpec subclass, "
-                f"got {spec_class!r}"
-            )
+            raise TypeError(f"backend '{name}' spec_class must be a BaseSpec subclass, got {spec_class!r}")
         cls._backends[name] = backend_cls
 
     @classmethod
