@@ -145,18 +145,29 @@ class FirstAggregator(ResponseAggregator[FirstConfig]):
 
 @pytest.fixture
 def fresh_registries():
-    """Drop every cross-test registration so each test starts clean.
+    """Snapshot → empty → yield → restore.
 
-    P2.9 will switch to auto-import; until then the registries are
-    process-wide class state and tests must reset them explicitly.
+    The registries are process-wide class state and modules register
+    themselves through ``@register_*`` decorators that fire only at
+    *first* import. A naïve ``reset_for_testing()`` teardown leaves the
+    process empty, breaking any later test that expects the production
+    registrations from side-effect imports (e.g. P2.6 runner tests
+    asserting ``RunnerRegistry.get("token_step")``). Snapshot/restore
+    keeps SPI-freeze tests starting from a known-empty slate while
+    leaving the rest of the suite to see the real registry contents.
     """
+    backends_snapshot = dict(BackendRegistry._backends)
+    runners_snapshot = dict(RunnerRegistry._runners)
+    aggregators_snapshot = dict(AggregatorRegistry._aggregators)
     BackendRegistry.reset_for_testing()
     RunnerRegistry.reset_for_testing()
     AggregatorRegistry.reset_for_testing()
-    yield
-    BackendRegistry.reset_for_testing()
-    RunnerRegistry.reset_for_testing()
-    AggregatorRegistry.reset_for_testing()
+    try:
+        yield
+    finally:
+        BackendRegistry._backends = backends_snapshot
+        RunnerRegistry._runners = runners_snapshot
+        AggregatorRegistry._aggregators = aggregators_snapshot
 
 
 # ── Tests ──────────────────────────────────────────────────────────────

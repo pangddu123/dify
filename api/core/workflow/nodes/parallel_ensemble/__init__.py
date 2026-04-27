@@ -17,7 +17,8 @@ from __future__ import annotations
 # alongside in P2.5 / P2.6 — wire them here too at that point.
 from . import aggregators as aggregators
 from . import backends as backends
+from . import runners as runners
 
 PARALLEL_ENSEMBLE_NODE_TYPE = "parallel-ensemble"
 
-__all__ = ["PARALLEL_ENSEMBLE_NODE_TYPE", "aggregators", "backends"]
+__all__ = ["PARALLEL_ENSEMBLE_NODE_TYPE", "aggregators", "backends", "runners"]
