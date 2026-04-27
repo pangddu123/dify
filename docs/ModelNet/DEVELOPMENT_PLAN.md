@@ -5,7 +5,13 @@
 > **目标读者**：在 `xianghe/temp/dify` 这个 fork 上做二次开发的工程师。
 > **基线代码**：`docs/ModelNet/PN.py`（参考算法）、`docs/ModelNet/model_info.json`（模型清单格式）。
 > **修改版后端**：本地 llama.cpp 服务，`/completion` 端点已暴露 `completion_probabilities[0].top_probs`。
-> **版本**：v2.3（v2 架构 review 修订 + v2.1 Phase 0 spike 闭环 + v2.2 P1.1 landing 前 schema 钉死 + v2.3 P1.1 schema 兜底加固；review 见底部"修订历史"）。
+> **版本**：v2.4（v2 架构 review 修订 + v2.1 Phase 0 spike 闭环 + v2.2 P1.1 landing 前 schema 钉死 + v2.3 P1.1 schema 兜底加固 + **v2.4 把 EXTENSIBILITY_SPEC v0.2.2 的三轴 SPI 融入 Phase 2，新增 Phase 4 v0.3 backend pack**；review 见底部"修订历史"）。
+>
+> **架构合约（Phase 2 起）**：`docs/ModelNet/EXTENSIBILITY_SPEC.md` v0.2.2 是 Phase 2
+> 三轴 SPI（ModelBackend / EnsembleRunner / Aggregator）+ Capability/Requirements
+> 双层校验 + Trace 一等公民的**详细契约**。本文 §6 描述 Phase 2 的实施计划，
+> 字段级 / 接口级签名以 EXTENSIBILITY_SPEC 为准。Phase 4 是 v0.3 增量的 backend
+> 适配器包（vLLM / OpenAI / Anthropic + artifact storage），见 §7.5。
 
 ---
 
@@ -17,8 +23,9 @@
    - **响应级并联**（Phase 1）：N 个 LLM 各自完整生成，再聚合（多数投票 / 拼接）。
    - **Token 级并联**（Phase 2）：N 个模型每步只前向一个 token，按 top-k logits 加和投票，等价于 PN.py。
 3. Token 级节点支持**流式输出**（每选一个 token 立即推送）。
-4. 聚合策略**易扩展**：新增策略只需写一个类 + 注册一行。
-5. **同时支持 workflow 模式与 advanced-chat 模式**（节点本身模式无关，但终端节点不同）。
+4. **三轴 SPI 易扩展**（Phase 2 起）：协作模式（runner）、模型后端（backend）、聚合策略（aggregator）三个独立可注册维度，加一种玩法 = 写一个类 + 注册一行；详见 `EXTENSIBILITY_SPEC.md` §2-7。
+5. **诊断数据是一等公民**：每条诊断（token 候选、per-model 输出、think 痕迹、错误、耗时）通过 `diagnostics_config` 显式开关 + 标准化 `EnsembleTrace` schema 暴露；详见 `EXTENSIBILITY_SPEC.md` §7。
+6. **同时支持 workflow 模式与 advanced-chat 模式**（节点本身模式无关，但终端节点不同）。
 
 ### 1.2 非目标（本期不做）
 - 不打包成 Dify 插件（plugin 机制不支持新增 workflow 节点类型）。
@@ -42,6 +49,10 @@
 | ADR-7 | Phase 2 必须做流式 | Token 投票每秒 5-15 token，非流式下用户面对 30s+ 空白屏 UX 崩 |
 | ADR-8 | HTTP 客户端**必须**用 `core.helper.ssrf_proxy` | 既定项目规范 + 阻止 SSRF |
 | ADR-9 | 同一节点同时通过 **workflow 模式（→End）和 advanced-chat 模式（→Answer）** 验收 | `update-dsl-modal.helpers.ts:46-56` 的 `getInvalidNodeTypes` 把 End 在 chat 模式判为无效 |
+| ADR-10 | Phase 2 节点采用**三轴 SPI**（ModelBackend / EnsembleRunner / Aggregator） + 单一对外节点 `parallel-ensemble`；"协作模式"是节点配置项不是节点类型 | 评审正确指出 v1 把"加一种 runner = 加一个节点"会让每种玩法都跑一遍 9 处前端注册；改成 SPI 后写一个 Python 类 + 注册一行即可，与 P1 的 `@register("majority_vote")` 同级。详见 `EXTENSIBILITY_SPEC.md` §2 / EP-3 |
+| ADR-11 | Capability **粗过滤** + Requirements **精校验** 双层；启动期跑完，绝不让不兼容组合活到运行期 | Capability 表达不了"top_k≤20"/"gpt-3.5-turbo-0301 不支持 logprobs"这类约束；引入 `runner.requirements(config)` + `backend.validate_requirements(spec, requirements)` 结构化校验。详见 `EXTENSIBILITY_SPEC.md` §3 / §9 |
+| ADR-12 | Trace / Diagnostics 是一等数据面，不是附属物；规模通过 `storage` 策略（v0.2: inline / metadata；v0.3 加 artifact）控制 | 用户原始诉求"轻松获取 logit / 中间数据"决定了 trace 必须 schema 化（`EnsembleTrace`）+ 显式开关（`DiagnosticsConfig`），避免 `outputs.text` 爆炸。详见 `EXTENSIBILITY_SPEC.md` §7 |
+| ADR-13 | 安全模型 = 「DSL/前端用户不可信，第三方 Python 扩展可信」；唯一硬边界是 DSL → 服务端 | Python 同进程拦不住反射 / `import requests`；要防恶意第三方扩展须走进程隔离 / wasm / RPC，超出 v0.1 范围。本规范的 SSRF 防护**仅**作用在 DSL 层（`extra="forbid"` 嵌套子模型 + ADR-3 `list_aliases()` 不返 url + ADR-8 `ssrf_proxy` 强制）；恶意扩展防护明确认账不做。详见 `EXTENSIBILITY_SPEC.md` §4.4 |
 
 ---
 
@@ -51,10 +62,11 @@
 |---|---|---|---|
 | Phase 0 | Spike：摸清 graphon 节点协议剩余未知项 | 0.5 天 | spike 报告 |
 | Phase 1 | 响应级聚合节点 `ensemble-aggregator` | 5–7 天 | 节点能在画布上拖出、运行、出聚合结果（workflow + chat 两套验收） |
-| Phase 2 | Token 级并联节点 `parallel-ensemble`（流式） + 模型注册表 | 11–14 天 | 节点能拖出、流式输出、对接两种模式的运行环境 |
-| Phase 3 | 测试 / 文档 / 示例工作流 / i18n | 3–4 天 | 单测 + 集成测试 + 4 份示例 DSL + README |
+| Phase 2 | `parallel-ensemble` 节点 + 三轴 SPI 框架（v0.2 范围：仅 llama.cpp backend） | 16–19 天 | 节点能拖出、流式输出、SPI 三轴可注册扩展、Trace 入 metadata；详见 `EXTENSIBILITY_SPEC.md` §11.1 |
+| Phase 3 | 测试 / 文档 / 示例工作流 / i18n | 3–4 天 | 单测 + 集成测试 + 4 份示例 DSL + README + `BACKEND_CAPABILITIES.md` |
+| Phase 4 | v0.3 backend pack：vLLM / OpenAI-compat / Anthropic + artifact storage | 4–7 天 | 三个新 backend adapter + 跨 backend logprob 一致性 fixture + Trace `storage="artifact"` |
 
-总计 **约 26 天**单人工作量（v1 的 22 天 +4 天，主要来自模型注册表 + 多注册点 + chat 模式验收）。
+总计 **约 31 天**单人工作量（v2.3 的 26 天 + Phase 2 SPI 框架 +5 天 + Phase 4 v0.3 backend pack +4–7 天 — Phase 4 可拆出独立交付，不阻塞 Phase 3 收尾）。详细 v0.2 / v0.3 范围切分见 `EXTENSIBILITY_SPEC.md` §11.2-11.3。
 
 ---
 
@@ -337,13 +349,19 @@ models:
 
 > **路径修订（2026-04-18，TASKS.md 顶部决定）**：本节原写 `api/core/model_runtime/local_models/`，
 > 实际落地放在 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/`——理由是当前 fork 已删除
-> `api/core/model_runtime/`，且和 Phase 2 节点同包更便于注入与测试。下文目录树以已落地结构为准。
+> `api/core/model_runtime/`，且和 Phase 2 节点同包更便于注入与测试。
+>
+> **SPI 升级路径（v2.4）**：P2.1 已落地的 `LocalModelRegistry` + `ModelSpec` 在 P2.1.5 SPI 冻结
+> 后会按 EXTENSIBILITY_SPEC §4.3 升级为 `ModelRegistry`（重命名）+ `BaseSpec` / `LlamaCppSpec`
+> 拆分（字段不变，加 `backend: Literal["llama_cpp"]` discriminator），并接入 `BackendRegistry`
+> 动态分发（不用静态 Annotated Union — 静态 union 第三方 backend 进不来，见
+> EXTENSIBILITY_SPEC §4.3 v0.2 修订）。**已落地代码不重写，只升级**。
 
 ```
-api/core/workflow/nodes/parallel_ensemble/llama_cpp/
+api/core/workflow/nodes/parallel_ensemble/llama_cpp/   # P2.1 已落地，P2.1.5/P2.2 升级
 ├── __init__.py
-├── registry.py           # LocalModelRegistry, ModelSpec     (P2.1 ✅)
-├── client.py             # LlamaCppClient（封装 ssrf_proxy） (P2.2 待落地)
+├── registry.py           # LocalModelRegistry, ModelSpec     (P2.1 ✅，P2.1.5 升级为 ModelRegistry + BaseSpec)
+├── client.py             # LlamaCppBackend(ModelBackend)     (P2.2 待落地，按 SPI §4 实现)
 └── exceptions.py         # LlamaCppNodeError 树              (P2.1 ✅)
 ```
 
@@ -460,121 +478,121 @@ class LlamaCppClient:
 - **节点输出**：`text`、`tokens_count`、`elapsed_ms`、`per_model_contribution`（可选诊断）。
 - **流式行为**：每选定一个 token 立即 emit `StreamChunkEvent`；末尾 emit `is_final=True` 的封口块 + `StreamCompletedEvent`。
 
-### 6.2 后端文件结构
+### 6.2 后端文件结构（v2.4 SPI 化重写，对齐 EXTENSIBILITY_SPEC §10）
 
 ```
 api/core/workflow/nodes/parallel_ensemble/
-├── __init__.py
-├── node.py                 # ParallelEnsembleNode(Node) -- 入口、事件协议
-├── entities.py             # ParallelEnsembleNodeData
-├── exceptions.py
-├── engine.py               # TokenVoteEngine: 主循环 (PN.py 移植)
-├── think_phase.py          # ThinkPhaseRunner: PN.py.process_think_task
+├── __init__.py                 # PARALLEL_ENSEMBLE_NODE_TYPE 常量（P2.1 ✅）
+├── node.py                     # ParallelEnsembleNode(Node) — 入口、事件协议、Trace finalize
+├── entities.py                 # ParallelEnsembleNodeData + DiagnosticsConfig
+├── exceptions.py               # LlamaCppNodeError 树（P2.1 ✅）+ CapabilityNotSupported / StructuredValidationError
+│
+├── spi/                        # ★ 三轴 SPI 接口冻结（P2.1.5）
+│   ├── __init__.py
+│   ├── capability.py           # Capability enum
+│   ├── requirements.py         # Requirement / ValidationIssue TypedDict
+│   ├── backend.py              # ModelBackend ABC + BaseSpec + ChatMessage/GenerationParams/...
+│   ├── runner.py               # EnsembleRunner ABC + RunnerEvent + ui_schema 白名单
+│   ├── aggregator.py           # ResponseAggregator / TokenAggregator typed bases + AggregationContext
+│   └── trace.py                # EnsembleTrace + TraceCollector
+│
+├── registry/                   # 注册表（v2.4 拆分；P2.1 的 LocalModelRegistry 升级为 ModelRegistry）
+│   ├── __init__.py
+│   ├── model_registry.py       # ModelRegistry（升级 P2.1，按 backend 字符串动态分发 spec_class）
+│   ├── backend_registry.py     # @register_backend("name")
+│   ├── runner_registry.py      # @register_runner("name")
+│   └── aggregator_registry.py  # @register_aggregator("name", scope="...")
+│
+├── backends/                   # ★ v0.2 仅 llama_cpp；vllm/openai/anthropic 留 Phase 4
+│   ├── __init__.py
+│   └── llama_cpp.py            # LlamaCppBackend（升级 P2.1 LlamaCppClient → ModelBackend SPI）
+│
+├── runners/                    # ★ v0.2 两个参考 runner
+│   ├── __init__.py
+│   ├── response_level.py       # ResponseLevelRunner — 包 P1 ensemble-aggregator 现有逻辑（P2.6.5）
+│   └── token_step.py           # TokenStepRunner — PN.py 主循环（P2.6）
+│
 └── aggregators/
-    ├── __init__.py
-    ├── base.py             # TokenAggregator ABC
-    ├── sum_score.py        # PN.py 默认（top-k 概率求和）
-    ├── max_score.py        # 取最大单分（不求和）
-    └── registry.py
+    ├── response/               # scope="response"，平滑迁移 P1 majority_vote / concat
+    │   ├── __init__.py
+    │   ├── majority_vote.py
+    │   └── concat.py
+    └── token/                  # scope="token"
+        ├── __init__.py
+        ├── sum_score.py
+        └── max_score.py
 ```
 
-> 注：`LlamaCppClient` 和 `ModelSpec` 实际落地在 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/`（见 6.0.3 路径修订），节点通过依赖注入拿到注册表。
+`pkgutil.walk_packages` 在 `_import_node_package` 里递归扫描，所有 `@register_*` 装饰器自动生效；P1 `ensemble-aggregator` 节点保留为"响应级 fast path"**不删**——它是 backwards-compat 的着陆点。
 
-### 6.3 关键模块设计
+> 注：`llama_cpp/` 下的 `registry.py` / `client.py` / `exceptions.py` 是 P2.1 已落地路径；P2.1.5 起，`registry.py` 内容拆迁到 `registry/model_registry.py`，`client.py` 升级为 `backends/llama_cpp.py`，`exceptions.py` 保留为节点层异常树。
+>
+> 接口签名级细节（每个 ABC、TypedDict、装饰器）以 `EXTENSIBILITY_SPEC.md` §3-7 为准。
 
-**`entities.py`**
+### 6.3 关键模块设计（v2.4：节点层只描述对外 schema；SPI 内部接口见 §6.7）
+
+**`entities.py`**（v2.4 改：runner_name / aggregator_name / runner_config / aggregator_config / diagnostics 五元组）
 ```python
 from graphon.entities.base_node_data import BaseNodeData
 from graphon.enums import NodeType
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from .spi.trace import DiagnosticsConfig    # 见 §6.7 / EXTENSIBILITY_SPEC §7.1
+
+
+class ParallelEnsembleConfig(BaseModel):
+    """嵌套业务配置；用 extra="forbid" 锁死（顶层 NodeData 须保 allow 兼容
+    BaseNodeData 的 selected/params/paramSchemas/datasource_label）。
+    DSL 偷塞 model_url 等敏感字段 → 在此层 forbid 拒。详见 SPIKE_GRAPHON §4.3。"""
+    model_config = ConfigDict(extra="forbid")
+
+    question_variable: list[str] = Field(min_length=2)
+    model_aliases: list[str] = Field(min_length=1)         # ⚠️ 仅 alias，无 URL；ADR-3
+
+    runner_name: str = Field(min_length=1)                  # registry key
+    runner_config: dict[str, object] = Field(default_factory=dict)
+
+    aggregator_name: str = Field(min_length=1)
+    aggregator_config: dict[str, object] = Field(default_factory=dict)
+
+    diagnostics: DiagnosticsConfig = Field(default_factory=DiagnosticsConfig)
+
 
 class ParallelEnsembleNodeData(BaseNodeData):
-    type: NodeType = "parallel-ensemble"           # ✅ Phase 0 Q1 已验证
-    question_variable: list[str]                    # selector，例 ["start", "query"]
-    model_aliases: list[str]                        # ⚠️ 仅别名，无 URL
-    top_k: int = 5
-    max_len: int = 1000
-    aggregator_name: str = "sum_score"
-    aggregator_config: dict = {}
-    enable_think: bool = True
+    """顶层 NodeData：保留 BaseNodeData 的 extra="allow"（兼容 graphon 兼容字段），
+    但加 model_validator 显式拒绝已知敏感字段 + 业务配置封到 ensemble 子模型。"""
+    type: NodeType = "parallel-ensemble"           # ✅ P2.1 已挂常量
+    ensemble: ParallelEnsembleConfig
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_sensitive_top_level(cls, data):
+        # T1（EXTENSIBILITY_SPEC §4.4）：DSL 不能在 NodeData 顶层塞 url/api_key 类字段
+        if isinstance(data, dict):
+            forbidden = {"model_url", "api_key", "api_key_env", "url", "endpoint"}
+            stray = forbidden & data.keys()
+            if stray:
+                raise ValueError(f"forbidden top-level fields: {sorted(stray)}")
+        return data
 ```
 
-**`aggregators/base.py`**
-```python
-from abc import ABC, abstractmethod
-from typing import TypedDict
+**Runner / Aggregator / Backend 接口、Capability 枚举、Trace schema** —— 见 §6.7（SPI 接口冻结）+ `EXTENSIBILITY_SPEC.md` §3-7。本文不再重复粘签名，避免双源真相。
 
-class TokenCandidate(TypedDict):
-    token: str
-    prob: float
+**响应级聚合策略（majority_vote / concat）**：直接复用 P1 已落地实现，P2.5 时改基类
+为 `ResponseAggregator[ConfigT]`（`AggregationContext` 默认参数，对 P1 调用点零影响）。
 
-class TokenAggregator(ABC):
-    name: str
+**Token 级聚合策略（sum_score / max_score）**：新建 `aggregators/token/`，继承
+`TokenAggregator`；签名 `aggregate(signals: TokenSignals, ctx: AggregationContext, config) -> TokenPick`，
+确定性（并列取字典序最小，禁 `random.choice`）。
 
-    @abstractmethod
-    def pick(
-        self,
-        per_model: dict[str, list[TokenCandidate]],
-        weights: dict[str, float],
-    ) -> tuple[str, float]:
-        """返回 (selected_token, score)"""
-```
+**TokenStepRunner**（`runners/token_step.py`，P2.6 落地）：等价 PN.py 主循环
+（每轮 ThreadPoolExecutor 并发 `backend.step_token(prompt, top_k)`、`aggregator.aggregate(...)`、
+所有 prompt 同步追加 token、`yield TokenEvent(...)`）；终止条件 `<end>` / `max_len`；
+`trace.record_token_step({...})` 由 `TraceCollector` 按 `DiagnosticsConfig` 决定真存还是 no-op。
 
-**`aggregators/sum_score.py`**（等价 PN.py.calculate_scores，确定性版本）
-```python
-@register("sum_score")
-class SumScoreAggregator(TokenAggregator):
-    def pick(self, per_model, weights):
-        scores: dict[str, float] = {}
-        for model_id, candidates in per_model.items():
-            w = weights.get(model_id, 1.0)
-            for cand in candidates:
-                scores[cand["token"]] = scores.get(cand["token"], 0.0) + cand["prob"] * w
-        if not scores:
-            return "<end>", 1.0
-        best_score = max(scores.values())
-        best_tokens = sorted([t for t, s in scores.items() if s == best_score])
-        return best_tokens[0], best_score   # 字典序最小（确定性，避免 random.choice 影响测试）
-```
-
-**`engine.py`**
-```python
-from collections.abc import Generator
-from concurrent.futures import ThreadPoolExecutor
-
-class TokenVoteEngine:
-    def __init__(
-        self,
-        specs: list[ModelSpec],
-        clients: dict[str, LlamaCppClient],
-        aggregator: TokenAggregator,
-        top_k: int,
-        max_len: int,
-        executor: ThreadPoolExecutor,
-    ): ...
-
-    def run_think_phase(self, prompts: dict[str, str]) -> dict[str, str]:
-        """对 type=think 的模型，先跑一段 chain-of-thought，append 到 prompt 上"""
-        # 并发调 client.completion(prompt, stop=[stop_think], max_tokens=8196)
-
-    def stream(self, prompts: dict[str, str]) -> Generator[str, None, dict]:
-        """主循环：每轮 yield 一个 token；返回最终诊断信息"""
-        for step in range(self.max_len):
-            futures = {
-                mid: self._executor.submit(self._one_step, mid, prompts[mid])
-                for mid in self._clients
-            }
-            per_model = {mid: f.result() for mid, f in futures.items()}
-
-            token, score = self._aggregator.pick(per_model, self._weights)
-            if token == "<end>":
-                return {"steps": step, "stopped_by": "eos"}
-
-            for mid in prompts:
-                prompts[mid] += token
-            yield token
-
-        return {"steps": self.max_len, "stopped_by": "max_len"}
-```
+**ResponseLevelRunner**（`runners/response_level.py`，P2.6.5）：包装 P1
+`ensemble-aggregator` 现有响应级语义；并发调 `backend.generate`，收齐喂
+`ResponseAggregator.aggregate`，`yield DoneEvent`。
 
 ### 6.4 节点 `_run()` —— **流式事件契约（按 Issue 2 修订）**
 
@@ -602,89 +620,88 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
         graph_init_params,
         graph_runtime_state,
         *,
-        local_model_registry: LocalModelRegistry,   # ⚠️ 由 DifyNodeFactory 注入（Phase 0 Q4 确认注入路径）
+        # v2.4 SPI 化：5 个依赖由 DifyNodeFactory 注入（P2.9 节，对齐 Phase 0 Q4）
+        model_registry: "ModelRegistry",
+        runner_registry: "RunnerRegistry",
+        aggregator_registry: "AggregatorRegistry",
+        backend_registry: "BackendRegistry",
         executor: ThreadPoolExecutor,                # 共用线程池
     ):
         super().__init__(id=id, config=config,
                          graph_init_params=graph_init_params,
                          graph_runtime_state=graph_runtime_state)
-        self._registry = local_model_registry
+        self._model_registry = model_registry
+        self._runner_registry = runner_registry
+        self._aggregator_registry = aggregator_registry
+        self._backend_registry = backend_registry
         self._executor = executor
+        self._ssrf_http = ...    # core.helper.ssrf_proxy 句柄，由 backend 实例化时注入
 
     @classmethod
     def version(cls) -> str:
         return "1"
 
     def _run(self) -> Generator[NodeEventBase, None, None]:
+        cfg = self.node_data.ensemble    # ParallelEnsembleConfig，见 §6.3
+
         # 1. 取 question
-        seg = self.graph_runtime_state.variable_pool.get(self.node_data.question_variable)
+        seg = self.graph_runtime_state.variable_pool.get(cfg.question_variable)
         question = str(seg.value)
 
-        # 2. 解析 alias → ModelSpec → LlamaCppClient
-        specs = [self._registry.get(a) for a in self.node_data.model_aliases]
-        clients = {s.id: LlamaCppClient(s) for s in specs}
-
-        # 3. apply_template
-        prompts = {
-            s.id: clients[s.id].apply_template([
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": question},
-            ])
+        # 2. alias → spec → backend 实例（backend 持 url/key，不外漏；§4.4 EP-4）
+        specs = [self._model_registry.get(a) for a in cfg.model_aliases]
+        backends: dict[str, ModelBackend] = {
+            s.id: self._backend_registry.get(s.backend)(s, http=self._ssrf_http)
             for s in specs
         }
 
-        # 4. think 前置（如开启）
-        if self.node_data.enable_think:
-            think_runner = ThinkPhaseRunner(specs, clients, self._executor)
-            think_appendix = think_runner.run(prompts)
-            for mid, suffix in think_appendix.items():
-                prompts[mid] += suffix
+        # 3. runner / aggregator 解析（注册表反查，名字未注册抛 ValidationError）
+        runner_cls = self._runner_registry.get(cfg.runner_name)
+        aggregator_cls = self._aggregator_registry.get(cfg.aggregator_name)
+        runner_config = runner_cls.config_class.model_validate(cfg.runner_config)
+        aggregator_config = aggregator_cls.config_class.model_validate(cfg.aggregator_config)
 
-        # 5. 主循环 + 流式 emit —— ⚠️ 用 self._node_id，不是 self.id
-        engine = TokenVoteEngine(
-            specs=specs,
-            clients=clients,
-            aggregator=get_token_aggregator(self.node_data.aggregator_name),
-            top_k=self.node_data.top_k,
-            max_len=self.node_data.max_len,
-            executor=self._executor,
-        )
+        # 4. Trace 门面（按 cfg.diagnostics 决定真存还是 no-op）
+        trace = TraceCollector(cfg.diagnostics, max_token_steps=cfg.diagnostics.max_trace_tokens)
+
+        # 5. 跑 runner — 流式翻译为 graphon 事件
         accumulated = ""
         t0 = time.time()
-        stats: dict = {}
-        gen = engine.stream(prompts)
-        try:
-            while True:
-                token = next(gen)
-                accumulated += token
-                yield StreamChunkEvent(
-                    selector=[self._node_id, "text"],   # ⚠️ graph node id
-                    chunk=token,
-                    is_final=False,
-                )
-        except StopIteration as stop:
-            stats = stop.value or {}
+        runner = runner_cls()
+        for event in runner.run(question, backends, aggregator_cls(), runner_config, trace):
+            if event["kind"] == "token":
+                accumulated += event["delta"]
+                yield StreamChunkEvent(selector=[self._node_id, "text"],
+                                        chunk=event["delta"], is_final=False)
+            elif event["kind"] == "done":
+                accumulated = event["text"]    # 非流式 runner 直接给最终 text
+                # 不在循环里 break，让 runner 决定是否再 yield 后续
 
-        # 6. 封口块（参考 agent message_transformer.py:271-275）
-        yield StreamChunkEvent(
-            selector=[self._node_id, "text"],
-            chunk="",
-            is_final=True,
-        )
+        # 6. 封口块
+        yield StreamChunkEvent(selector=[self._node_id, "text"], chunk="", is_final=True)
 
-        # 7. 完成
+        # 7. Trace finalize → 按 storage 策略写 outputs / metadata（EXTENSIBILITY_SPEC §7.4）
+        trace_data = trace.finalize()
+        outputs = {"text": accumulated,
+                    "tokens_count": trace_data["summary"]["tokens_count"],
+                    "elapsed_ms": int((time.time() - t0) * 1000)}
+        metadata: dict = {}
+        if cfg.diagnostics.storage == "inline":
+            outputs["trace"] = trace_data
+        elif cfg.diagnostics.storage == "metadata":
+            metadata["ensemble_trace"] = trace_data
+
         yield StreamCompletedEvent(
-            node_run_result=NodeRunResult(            # ⚠️ 关键字 node_run_result=
+            node_run_result=NodeRunResult(
                 status=WorkflowNodeExecutionStatus.SUCCEEDED,
-                outputs={
-                    "text": accumulated,
-                    "tokens_count": stats.get("steps", 0),
-                    "elapsed_ms": int((time.time() - t0) * 1000),
-                },
-                inputs={"question": question, "models": list(clients.keys())},
+                outputs=outputs,
+                metadata=metadata,
+                inputs={"question": question, "models": list(backends.keys())},
             )
         )
 ```
+
+> 上文为 v2.4 SPI 化伪代码，省略了 capability + requirements 启动期校验、单 backend 超时聚合、`FullResponseEvent` 处理（judge runner）。完整流程见 `EXTENSIBILITY_SPEC.md` §9 校验流水线 + §5/§7。
 
 **关键差异点提醒**（v1 文档错的地方）：
 1. 事件名 `StreamChunkEvent` ≠ `NodeRunStreamChunkEvent`（后者是 graphon 内部 `_dispatch` 转换后的事件，节点自身只 yield `StreamChunkEvent`；参考 `graphon/nodes/base/node.py:633-642`）
@@ -701,11 +718,12 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
 
 ### 6.6 流式实现的两步走
 **Step 1：纯 Python 验证逻辑**
-- `TokenVoteEngine.stream()` 写完后，写一个 `pytest` mock `LlamaCppClient`，喂假的 top_probs 序列，断言：
+- `TokenStepRunner.run()` 写完后，写一个 `pytest` mock `LlamaCppBackend`（实现 `step_token()`），喂假的 top-k 候选序列，断言：
   - 终止条件正确（`<end>` / `max_len`）
-  - 聚合策略正确（确定性输出）
+  - 聚合策略正确（确定性输出，确保字典序 tie-break）
   - prompt 同步正确（每轮所有模型 prompt 都加同一个 token）
-- 此时**完全不依赖 graphon**。
+  - `TraceCollector.record_token_step` 按 `DiagnosticsConfig` 真存 / no-op
+- 此时**完全不依赖 graphon**（runner SPI 与 graphon 解耦，仅 node.py 套 graphon 事件）。
 
 **Step 2：套上 graphon 事件协议**
 - 实现 `_run()`，用上节 6.4 验证过的事件签名。
@@ -727,6 +745,38 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
 8. 浏览器看到文字逐字出现（不是一次性出现）；首 token 延迟 ≤ think 阶段时长 + 1 个 token 时间。
 9. DSL 文件能通过 `validateDSLContent(content, AppModeEnum.ADVANCED_CHAT)`。
 
+### 6.7 SPI 接口冻结（v2.4 新章 — 引用 `EXTENSIBILITY_SPEC.md` 为详细契约）
+
+> Phase 2 引入三轴 SPI 是为了让"加一种协作玩法"压缩到"写一个 Python 类 +
+> 注册一行"。以下接口在 P2.1.5 冻结后**禁止破坏性变更**；扩展走子类化或新注册项。
+
+**Capability 枚举**（`spi/capability.py`）：`STREAMING / TOKEN_STEP / TOP_PROBS / POST_SAMPLING_PROBS / LOGITS_RAW / CHAT_TEMPLATE / FUNCTION_CALLING / KV_CACHE_REUSE`。详见 EXTENSIBILITY_SPEC §3.1-3.2。
+
+**Requirements 精校验**（`spi/requirements.py`，ADR-11）：`Requirement{kind, value, rationale}` + `ValidationIssue{severity, requirement, message, i18n_key}`，`runner.requirements(config)` → `backend.validate_requirements(spec, requirements)`。详见 EXTENSIBILITY_SPEC §3.4。
+
+**ModelBackend ABC**（`spi/backend.py`）：`name` / `spec_class` ClassVar，公开 `id` / `model_name` / `weight` / `instance_capabilities` property，方法 `capabilities(spec)` / `validate_requirements(...)` / `generate(prompt, params)` / `generate_stream` / `step_token` / `apply_template`。详见 EXTENSIBILITY_SPEC §4.1。
+
+**EnsembleRunner ABC**（`spi/runner.py`）：`name` / `config_class` / `aggregator_scope` / `required_capabilities` / `optional_capabilities` / `i18n_key_prefix` / `ui_schema` ClassVar；方法 `requirements(config)` / `validate_selection(config, aliases, registry)` / `run(question, backends, aggregator, config, trace) -> Iterator[RunnerEvent]`。详见 EXTENSIBILITY_SPEC §5.1。
+
+**Aggregator typed bases**（`spi/aggregator.py`，ADR-12 配套）：`Aggregator[ConfigT, SignalT, ResultT]` 通用基类 + `ResponseAggregator[ConfigT]`（scope="response"）+ `TokenAggregator[ConfigT]`（scope="token"），`AggregationContext` 注入 weights / capabilities / step_index / trace 句柄。详见 EXTENSIBILITY_SPEC §6。
+
+**Trace + DiagnosticsConfig**（`spi/trace.py`，ADR-12）：`DiagnosticsConfig`（`storage: Literal["inline","metadata"]`，v0.3 加 `"artifact"`） + `EnsembleTrace` schema + `TraceCollector` 门面。runner / aggregator 调 `trace.record_*()`，是否真存由 collector 按 config 决定。详见 EXTENSIBILITY_SPEC §7。
+
+**校验流水线**（启动期 / DSL 导入时跑完）：(1) aggregator scope 对齐 runner ；(2) runner_config / aggregator_config schema 校验；(3) Capability 粗过滤；(4) Requirements 精校验；(5) `runner.validate_selection` 跨字段校验。任一失败 → `StructuredValidationError`，节点标红。详见 EXTENSIBILITY_SPEC §9。
+
+### 6.8 v0.2 范围 vs Phase 4 (v0.3) 切分
+
+| 项 | v0.2（Phase 2 落地） | v0.3（Phase 4 增量） |
+|---|---|---|
+| Backend 数 | 1（`llama_cpp`） | +3（`vllm` / `openai_compat` / `anthropic`） |
+| Runner 参考实现 | 2（`response_level` / `token_step`） | +0（v0.3 不强制加新 runner，第三方按 SPI 自加） |
+| 第三方发现路径 | (a) fork 内目录 `runners/` `backends/` `aggregators/<scope>/` | + (b) `model_net.yaml` 顶层 `extra_backend_modules` / `extra_runner_modules` / `extra_aggregator_modules` 显式 import path |
+| Trace storage 选项 | `inline` / `metadata` | + `artifact`（附件存储） |
+| 跨 backend logprob 一致性测试 | 不做（只一个 backend） | 加 fixture 单测 |
+| 工时估计 | +5 天 | +4–7 天 |
+
+详见 EXTENSIBILITY_SPEC §11.2 / §11.3 / §12.1。
+
 ---
 
 ## 7. Phase 3 — 测试 / 文档 / 示例工作流
@@ -735,8 +785,8 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
 | 层级 | 文件 | 内容 |
 |---|---|---|
 | 单测 | `api/tests/unit_tests/core/workflow/nodes/ensemble_aggregator/` | 策略 + 节点 |
-| 单测 | `api/tests/unit_tests/core/workflow/nodes/parallel_ensemble/` | 聚合器 + engine + think + node._run（mock client + mock registry） |
-| 单测 | `api/tests/unit_tests/core/workflow/nodes/parallel_ensemble/llama_cpp/` | registry 加载 / Pydantic validation / `extra="forbid"` 拒绝未知 yaml 字段 / ssrf_proxy mock（路径同 6.0.3 修订） |
+| 单测 | `api/tests/unit_tests/core/workflow/nodes/parallel_ensemble/` | runners / aggregators / node._run / capability 粗过滤 / requirements 精校验 / TraceCollector 开关 / storage(inline\|metadata) 路由（mock backend + mock registry） |
+| 单测 | `api/tests/unit_tests/core/workflow/nodes/parallel_ensemble/llama_cpp/` | registry 加载 / Pydantic validation / `extra="forbid"` 拒绝未知 yaml 字段 / `ssrf_proxy` mock + `LlamaCppBackend` 6 方法（capabilities / validate_requirements / generate / generate_stream / step_token / apply_template） |
 | 前端单测 | `web/app/components/workflow/nodes/ensemble-aggregator/__tests__/` | panel + use-config |
 | 前端单测 | `web/app/components/workflow/nodes/parallel-ensemble/__tests__/` | 同上 + 模型下拉（mock API） |
 
@@ -756,6 +806,37 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
 
 ### 7.4 i18n
 - `web/i18n/en-US/workflow.ts` 和 `web/i18n/zh-Hans/workflow.ts` 加节点显示名 / 配置项标签 / 错误提示。
+- 每个 runner / aggregator 按 `i18n_key_prefix` 注册：`<prefix>.name` / `<prefix>.description` / `<prefix>.fields.<field>.{label,tooltip}` 必须 en-US + zh-Hans 两套都有；CI lint 检查注册项 vs i18n key 集（OQ-2）。
+
+### 7.5 `BACKEND_CAPABILITIES.md`（v2.4 新增）
+- 把 EXTENSIBILITY_SPEC §3.2 capability 矩阵 + §3.2 三个语义坑（POST_SAMPLING_PROBS vs LOGITS_RAW / OpenAI top_k≤20 / vLLM logprobs 单位换算）钉死成独立文档，附 fixture 测试
+- 是 Phase 4 加 backend 时对齐语义的合约文件；P2.2.4 落地（Phase 2 内）
+
+---
+
+## 7bis. Phase 4 — v0.3 backend pack（4–7 天）
+
+> **目的**：在 Phase 2 三轴 SPI 冻结后，按 EXTENSIBILITY_SPEC §11.3 / §12.1 落地三个新
+> backend 适配器 + 跨 backend logprob 一致性测试 + Trace `artifact` storage。
+> Phase 4 与 Phase 3 平行可拆，**不阻塞 Phase 3 收尾**；研究侧用户如果只用
+> llama.cpp，Phase 4 可延期或剪除。
+
+### 7bis.1 范围
+
+| 包 | 内容 | 估时 | 备注 |
+|---|---|---|---|
+| `VllmBackend` adapter | 实现 `ModelBackend` 6 方法 + capabilities 矩阵 + logprobs (log-softmax → exp 归一) 语义换算 | +2 天 | 关键坑：vLLM `logprobs` 是 log-softmax，必须 adapter 内换算到与 llama.cpp `top_probs` 一致的 post-sampling-prob 语义；`LOGITS_RAW` 通过 `return_logits` 内部接口可拿 |
+| `OpenAICompatBackend` adapter | chat-completions 端点 + `top_logprobs ≤ 20` 的 `validate_requirements` 拒；`api_key_env` resolver | +2 天 | 不支持 `LOGITS_RAW`；`top_k > 20` 在 requirements 精校验阶段就拒绝，不留给运行期 |
+| `AnthropicBackend` adapter | 仅 `STREAMING` + `FUNCTION_CALLING`，不实现 `step_token`（不暴露 logprobs） | +1 天 | 仅能进 `response_level` runner；进 `token_step` 在 capability 粗过滤阶段就被排除 |
+| 跨 backend logprob 一致性 fixture | 喂三个 backend 同一 prompt，断言 top-k 候选概率分布在公共 vocab 子集上误差 < ε | +1 天 | 防 adapter 内部归一化漏写 |
+| Trace `storage="artifact"` | `DiagnosticsConfig.storage` 加 `"artifact"` Literal；写到附件存储（路径由 framework 统一） | +1 天 | 解决 token 级 1k 步 trace 在 `metadata` 也偏大的场景 |
+
+### 7bis.2 验收
+
+- 三个新 backend 各跑一个真实 endpoint（`base_url` + `api_key_env` 走 `core.helper.ssrf_proxy`），从画布拖出能跑响应级 + 能跑 token 级（`anthropic` 仅响应级）
+- `validate_requirements` 拒绝路径单测：OpenAI top_k=25 → `StructuredValidationError("top_logprobs is capped at 20, runner requested 25")`
+- 跨 backend 一致性 fixture 绿（误差 ε < 1e-3 在 post-sampling 归一后）
+- `storage="artifact"` 单测：1k 步 token-level trace 写入附件存储，`outputs.text` 干净，`metadata` 含 artifact 引用
 
 ---
 
@@ -828,6 +909,24 @@ Day 23-26 Phase 3 (测试 + 文档 + 4 份 DSL + i18n)
 ---
 
 ## 修订历史
+
+### v2.4 (2026-04-27, EXTENSIBILITY_SPEC v0.2.2 融入主计划)
+
+把原来作为伴生文档的 `EXTENSIBILITY_SPEC.md` v0.2.2（三轴 SPI + capability/requirements 双层校验 + Trace 一等公民）融入 Phase 2 主计划，并新增 Phase 4 (v0.3 backend pack)：
+
+- §1.1 目标 #4 改为"三轴 SPI 易扩展"，新增 #5 "诊断数据是一等公民"；原 #5 模式兼容下移为 #6
+- §2 新增 ADR-10 (三轴 SPI + 单节点 `parallel-ensemble`)、ADR-11 (Capability 粗过滤 + Requirements 精校验)、ADR-12 (Trace 一等数据面)、ADR-13 (安全边界 = DSL→服务端唯一硬边界，恶意第三方扩展明确不防)
+- §3 Phase 总览：Phase 2 估时 11–14 → 16–19 天 (+5 天 SPI 框架)；新增 Phase 4 (v0.3 backend pack, 4–7 天)；总计 26 → 31 天
+- §6.0.3 加 SPI 升级路径说明：P2.1 已落地的 `LocalModelRegistry` + `ModelSpec` 在 P2.1.5 升级为 `ModelRegistry` + `BaseSpec` / `LlamaCppSpec`，按 backend 字符串动态分发（不静态 Annotated Union）；已落地代码不重写
+- §6.2 后端文件结构按 EXTENSIBILITY_SPEC §10 重写：新增 `spi/` `registry/` `backends/` `runners/` `aggregators/<scope>/` 子包；`engine.py` / `think_phase.py` 撤销，逻辑挪进 `runners/token_step.py`
+- §6.3 entities.py 改为 `runner_name` / `aggregator_name` / `runner_config` / `aggregator_config` / `diagnostics` 五元组；嵌套 `ParallelEnsembleConfig` 子模型挂 `extra="forbid"`，顶层 `ParallelEnsembleNodeData` 保 `extra="allow"`（兼容 BaseNodeData 的 selected/params 等兼容字段）+ `model_validator(mode="before")` 显式拒已知敏感字段
+- §6.4 `_run` 伪代码改 SPI 化：runner_registry / aggregator_registry / backend_registry 反查，`runner.run(question, backends, aggregator, config, trace)` 翻译事件，`TraceCollector.finalize()` 按 storage 策略写 outputs / metadata
+- §6.6 移植步骤：`TokenVoteEngine` → `TokenStepRunner`；mock 单位由 `LlamaCppClient` 改为 `LlamaCppBackend.step_token`
+- 新增 §6.7 SPI 接口冻结（capability / requirements / backend / runner / aggregator / trace / 校验流水线）— 字段级合约引 EXTENSIBILITY_SPEC §3-7 / §9
+- 新增 §6.8 v0.2 vs v0.3 范围切分表
+- 新增 §7.5 `BACKEND_CAPABILITIES.md` 文档（capability 矩阵 + 三个语义坑 + fixture）
+- 新增 §7bis Phase 4：VllmBackend / OpenAICompatBackend / AnthropicBackend / 跨 backend logprob 一致性 / Trace `storage="artifact"`
+- §7.4 i18n：每个 runner / aggregator 按 `i18n_key_prefix` 注册，CI lint 检查 key 一致性
 
 ### v2.3 (2026-04-19, P1.1 schema 兜底加固 — review round 2)
 
