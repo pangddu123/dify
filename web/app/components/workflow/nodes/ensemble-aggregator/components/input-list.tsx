@@ -54,31 +54,31 @@ const InputList: FC<Props> = ({
   )
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {list.map((item, index) => (
         <div
           key={index}
-          className="flex items-center gap-x-1"
+          className="space-y-2 rounded-lg border border-divider-subtle bg-background-section-burn px-2 py-2"
         >
-          <Input
-            className={cn('w-24 shrink-0 text-xs')}
-            value={item.source_id}
-            onChange={handleSourceIdInput(index)}
-            placeholder={t(`${i18nPrefix}.sourceIdPlaceholder`, { ns: 'workflow' })!}
-            disabled={readonly}
-          />
-          <div className="min-w-0 grow">
-            <VarReferencePicker
-              nodeId={nodeId}
-              readonly={readonly}
-              isShowNodeName
-              value={item.variable_selector}
-              onChange={handleSelectorChange(index)}
-              filterVar={filterVar}
-              isSupportFileVar={false}
+          <div className="flex items-center gap-x-2">
+            <Input
+              className={cn('grow text-xs')}
+              value={item.source_id}
+              onChange={handleSourceIdInput(index)}
+              placeholder={t(`${i18nPrefix}.sourceIdPlaceholder`, { ns: 'workflow' })!}
+              disabled={readonly}
             />
+            {!readonly && <RemoveButton onClick={() => onRemove(index)} />}
           </div>
-          {!readonly && <RemoveButton onClick={() => onRemove(index)} />}
+          <VarReferencePicker
+            nodeId={nodeId}
+            readonly={readonly}
+            isShowNodeName
+            value={item.variable_selector}
+            onChange={handleSelectorChange(index)}
+            filterVar={filterVar}
+            isSupportFileVar={false}
+          />
         </div>
       ))}
       {!readonly && (

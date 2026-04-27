@@ -8,6 +8,7 @@ import { ENSEMBLE_STRATEGY_NAMES } from './types'
 const i18nPrefix = 'nodes.ensembleAggregator'
 
 const metaData = genNodeMetaData({
+  author: 'xianghe',
   classification: BlockClassificationEnum.Transform,
   sort: 4,
   type: BlockEnum.EnsembleAggregator,
