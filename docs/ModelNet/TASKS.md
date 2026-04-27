@@ -2,7 +2,7 @@
 
 > **配套文档**：`DEVELOPMENT_PLAN.md` v2。本文档是把 v2 计划落到可勾选动作的执行清单。
 > **路径决定**（2026-04-18）：ModelSpec / LlamaCppClient 放 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/`（和 Phase 2 节点同包），不放 v2 计划写的 `api/core/model_runtime/local_models/` —— 因为 `api/core/model_runtime/` 在当前 fork 已不存在。
-> **总任务数**：28（Phase 0: 2 / Phase 1: 8 / Phase 2: 15 / Phase 3: 3）
+> **总任务数**：28（Phase 0: 2 / Phase 1: 8 / Phase 2: 15 / Phase 3: 3）；**已完整完成 10**（Phase 0: 2/2、Phase 1: 7/8、Phase 2: 1/15），**部分完成 1**（Phase 1 P1.8 仅静态部分，dev server 联调延后）
 
 ---
 
@@ -232,20 +232,28 @@ Phase 3 测试文档  ──► 收尾
 
 ## Phase 2 — Token 级并联节点（11–14 天）
 
-### P2.1 模型注册表：ModelSpec + LocalModelRegistry 单例
+### ✅ P2.1 模型注册表：ModelSpec + LocalModelRegistry 单例 (2026-04-27)
 
-新建 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/{__init__.py, exceptions.py, registry.py}`：
+新建 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/{__init__.py, exceptions.py, registry.py}`，外加 `parallel_ensemble/__init__.py` 上挂 `PARALLEL_ENSEMBLE_NODE_TYPE = "parallel-ensemble"` 常量为 P2.8 预留。
 
-- `ModelSpec(BaseModel, extra="forbid")`：字段名严格对齐 `model_info.json`
-  - `id`, `model_name`, `model_arch`, `model_url: AnyUrl`, `EOS`（大写）, `type: Literal["normal","think"]`, `stop_think: str | None`, `weight=1.0`, `request_timeout_ms=30000`
-- `LocalModelRegistry` 单例：`instance()` / `_load()` / `get(alias)` / `list_aliases()`（list_aliases 返回 `id+model_name+type`，**不含 url**）
-- 文件不存在时 `_load` 留空字典 + 控制台日志告警（风险 R9）
+- `ModelSpec(BaseModel, extra="forbid", frozen=True)`：字段名严格对齐 `docs/ModelNet/model_info.json`
+  - `id` (min_length=1), `model_name` (min_length=1), `model_arch="llama"`, `model_url: AnyUrl`, `EOS` (min_length=1), `type: Literal["normal","think"]="normal"`, `stop_think: str|None=None`, `weight=1.0` (gt=0), `request_timeout_ms=30000` (gt=0)
+  - `extra="forbid"` 是 **yaml 加载层** 防 typo / rogue 字段的硬约束（运维侧 yaml 写错或多余字段直接 boot 拒）；`frozen=True` 让跨线程引用安全。⚠️ 它**不**防 DSL 偷塞 `model_url`——ModelSpec 从不由 DSL 实例化，DSL 走 alias 反查 spec。DSL 侧防护见 P2.8 / P2.10 的 NodeData 层处理。SSRF 第一道闸是 `list_aliases()` 不返回 url（ADR-3）。
+- `LocalModelRegistry` 单例：`instance()` 双检锁 + `for_testing(path)` / `reset_for_testing()` 单测 hooks + `_load(path_override=None)` + `get(alias)` / `list_aliases()` (TypedDict `AliasInfo{id,model_name,type}`，**不含 url**) + `__contains__` / `__len__` / `__repr__`
+- **R9 落地**：文件不存在 → 空字典 + `logger.warning("Model registry yaml not found at '%s'; ...")`（不抛异常，不炸 boot）
+- **路径解析 forward-compat**：`DEFAULT_REGISTRY_PATH` 基于 `registry.py` 反推 API root，cwd-independent 地指向 `api/configs/model_net.yaml`；`_resolve_path` 用 `getattr(dify_config, "MODEL_NET_REGISTRY_PATH", DEFAULT_REGISTRY_PATH)`，P2.2 在 `dify_config.feature` 注册 Field 后零修改接入
+- **加载阶段守卫**：duplicate `id` / 顶层非 mapping / `models` 非 list / entry 非 mapping / `OSError|YAMLError` / Pydantic `ValidationError` 全部转 `RegistryFileError(path, reason)`，带 index 上下文
+- **Exception 树**：`LlamaCppNodeError` ⊃ `ModelRegistryError` ⊃ {`RegistryFileError(path, reason)`, `UnknownModelAliasError(alias)`}，节点层可单 except 整族
+- **smoke 10/10 绿**（inline 等价 P2.3 验收的 4/5 条）：(1) ModelSpec 吃下 model_info.json 全部 7 条 (2) extra-forbid 拒 unknown key (3) list_aliases 不含 url (4) get unknown → UnknownModelAliasError (5) missing file → empty + WARNING (R9) (6) duplicate id → RegistryFileError (7) rogue entry field → RegistryFileError (8) malformed yaml → RegistryFileError (9) 空 yaml → 空 registry 不报错 (10) instance() 单例身份
+- **无回归**：`uv run --project api pytest api/tests/unit_tests/core/workflow/nodes/ensemble_aggregator/ -q -o addopts=""` → 47/47 绿
+- **延后到 P2.2**：dify_config 注册 `MODEL_NET_REGISTRY_PATH`、sample yaml + `.gitignore`、`LlamaCppClient`；**延后到 P2.3**：把 inline smoke 移成正式 pytest 单测文件 + ssrf_proxy mock 用例
+- 详见 `docs/ModelNet/P2.1_LANDING.md`
 
 ### P2.2 LlamaCppClient (强制 ssrf_proxy) + sample yaml + dify_config 配置项
 
 - `parallel_ensemble/llama_cpp/client.py`：`LlamaCppClient.apply_template` + `completion`，**所有 HTTP 走 `core.helper.ssrf_proxy`**（ADR-8）
 - 响应解析独立成函数（R7：固化 `top_probs` schema）
-- 在 `api/configs/dify_config.py`（或 sub config）加 `MODEL_NET_REGISTRY_PATH: str = "api/configs/model_net.yaml"`
+- 在 `api/configs/dify_config.py`（或 sub config）加 `MODEL_NET_REGISTRY_PATH`（默认等价于 API root 下的 `configs/model_net.yaml`）
 - 写 sample `api/configs/model_net.yaml.example` 模板 + 同目录 README 说明字段（**真实 yaml 进 `.gitignore`**，避免提交内网 URL）
 
 ### P2.3 模型注册表单测：load / extra=forbid / client mock ssrf_proxy
@@ -253,8 +261,8 @@ Phase 3 测试文档  ──► 收尾
 `api/tests/unit_tests/core/workflow/nodes/parallel_ensemble/llama_cpp/`：
 
 - `test_registry_load`: 临时写 yaml 文件，验证 `instance()` 加载正确
-- `test_extra_forbid`: yaml 含未知字段 → `ValidationError`
-- `test_unknown_alias`: `get("nope")` raises `KeyError`
+- `test_extra_forbid`: yaml 含未知字段 → `RegistryFileError`（包装 Pydantic `ValidationError`）
+- `test_unknown_alias`: `get("nope")` raises `UnknownModelAliasError`
 - `test_list_aliases_no_url`: 返回字典不含 `model_url` 字段
 - `test_client_uses_ssrf_proxy`: monkeypatch `ssrf_proxy.post`，验证被调用且 timeout 正确换算
 
@@ -321,7 +329,22 @@ Phase 3 测试文档  ──► 收尾
 - `test_completed_outputs`: `outputs.text == 累计`、`tokens_count == steps`、`elapsed_ms` 合理
 - `test_single_model_timeout`: 单模型 raises `TimeoutError`，本轮 vote 不计该模型，最终 SUCCEEDED
 - `test_all_timeout`: 全部模型超时 → `StreamCompletedEvent(status=FAILED)`
-- `test_extra_forbid_dsl`: DSL 塞 `model_url` 字段 → Pydantic 拒绝（SSRF 防护）
+- `test_dsl_rejects_model_url`: DSL 在 node `data` 里塞 `model_url` /
+  其他 url 类敏感字段 → 节点配置层拒绝。
+  ⚠️ **实现选择（P2.8 决定，不要默认开顶层 forbid）**：
+  - **不要**给 `ParallelEnsembleNodeData` 顶层 `extra="forbid"`——会和
+    BaseNodeData 已记录的兼容字段冲突（`selected`, `params`,
+    `paramSchemas`, `datasource_label` 等，见 SPIKE_GRAPHON §4.3）。
+  - 推荐两选一：(a) 把业务配置抽进**嵌套** Pydantic 子模型
+    （如 `ParallelEnsembleConfig`），在该子模型上用 `extra="forbid"`，
+    顶层 NodeData 保持 `allow` 继承；或 (b) 在顶层 NodeData 加
+    `model_validator(mode="before")` **显式拒绝**已知敏感字段
+    （`model_url`、其他形如 url 的 key）的同时仍 `allow` 兼容字段。
+  - ModelSpec 层 `extra="forbid"`（yaml 防 typo / rogue 字段）已由
+    P2.1_LANDING.md smoke 2 覆盖，**不属于本测试范围**——ModelSpec 不
+    解析 DSL，不要把这两层混测。
+  - 详见 SPIKE_GRAPHON.md §4.3–4.4 的两层防护说明 + base_node_data
+    兼容字段注释。
 
 ### P2.11 前端：parallel-ensemble 包 + 模型多选下拉 + import 按钮 + 9 处注册 + i18n
 

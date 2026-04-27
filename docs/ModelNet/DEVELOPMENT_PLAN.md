@@ -334,12 +334,17 @@ models:
 字段命名直接对齐 `model_info.json`（`EOS` 大写、`stop_think` 下划线），**确保现有 PN.py 用户能 1:1 迁移**。
 
 #### 6.0.3 模块结构
+
+> **路径修订（2026-04-18，TASKS.md 顶部决定）**：本节原写 `api/core/model_runtime/local_models/`，
+> 实际落地放在 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/`——理由是当前 fork 已删除
+> `api/core/model_runtime/`，且和 Phase 2 节点同包更便于注入与测试。下文目录树以已落地结构为准。
+
 ```
-api/core/model_runtime/local_models/
+api/core/workflow/nodes/parallel_ensemble/llama_cpp/
 ├── __init__.py
-├── registry.py           # LocalModelRegistry, ModelSpec
-├── llama_cpp_client.py   # LlamaCppClient（封装 ssrf_proxy）
-└── exceptions.py
+├── registry.py           # LocalModelRegistry, ModelSpec     (P2.1 ✅)
+├── client.py             # LlamaCppClient（封装 ssrf_proxy） (P2.2 待落地)
+└── exceptions.py         # LlamaCppNodeError 树              (P2.1 ✅)
 ```
 
 #### 6.0.4 关键接口
@@ -473,7 +478,7 @@ api/core/workflow/nodes/parallel_ensemble/
     └── registry.py
 ```
 
-> 注：`LlamaCppClient` 和 `ModelSpec` 不在节点目录里，在 `api/core/model_runtime/local_models/`（见 6.0），节点通过依赖注入拿到注册表。
+> 注：`LlamaCppClient` 和 `ModelSpec` 实际落地在 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/`（见 6.0.3 路径修订），节点通过依赖注入拿到注册表。
 
 ### 6.3 关键模块设计
 
@@ -731,7 +736,7 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
 |---|---|---|
 | 单测 | `api/tests/unit_tests/core/workflow/nodes/ensemble_aggregator/` | 策略 + 节点 |
 | 单测 | `api/tests/unit_tests/core/workflow/nodes/parallel_ensemble/` | 聚合器 + engine + think + node._run（mock client + mock registry） |
-| 单测 | `api/tests/unit_tests/core/model_runtime/local_models/` | registry 加载 / Pydantic validation / `extra="forbid"` 拒绝未知字段 |
+| 单测 | `api/tests/unit_tests/core/workflow/nodes/parallel_ensemble/llama_cpp/` | registry 加载 / Pydantic validation / `extra="forbid"` 拒绝未知 yaml 字段 / ssrf_proxy mock（路径同 6.0.3 修订） |
 | 前端单测 | `web/app/components/workflow/nodes/ensemble-aggregator/__tests__/` | panel + use-config |
 | 前端单测 | `web/app/components/workflow/nodes/parallel-ensemble/__tests__/` | 同上 + 模型下拉（mock API） |
 
