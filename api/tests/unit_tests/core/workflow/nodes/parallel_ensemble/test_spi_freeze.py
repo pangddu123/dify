@@ -38,6 +38,7 @@ from core.workflow.nodes.parallel_ensemble.registry import (
     register_runner,
 )
 from core.workflow.nodes.parallel_ensemble.spi import (
+    UI_CONTROL_ALLOWLIST,
     AggregationContext,
     BaseSpec,
     Capability,
@@ -53,10 +54,8 @@ from core.workflow.nodes.parallel_ensemble.spi import (
     ResponseSignal,
     RunnerEvent,
     TraceCollector,
-    UI_CONTROL_ALLOWLIST,
     ValidationIssue,
 )
-
 
 # ── Echo backend ───────────────────────────────────────────────────────
 
@@ -277,7 +276,7 @@ class TestSpiTypeInvariants:
 
     def test_ui_control_allowlist_is_frozen_set(self):
         assert isinstance(UI_CONTROL_ALLOWLIST, frozenset)
-        assert UI_CONTROL_ALLOWLIST == frozenset(
+        assert frozenset(
             {
                 "number_input",
                 "text_input",
@@ -287,7 +286,7 @@ class TestSpiTypeInvariants:
                 "multi_select",
                 "model_alias_select",
             }
-        )
+        ) == UI_CONTROL_ALLOWLIST
 
     def test_diagnostics_config_extra_forbid(self):
         from pydantic import ValidationError

@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from core.workflow.nodes.parallel_ensemble.backends.llama_cpp import (  # noqa: F401
+from core.workflow.nodes.parallel_ensemble.backends.llama_cpp import (
     LlamaCppSpec,
 )
 from core.workflow.nodes.parallel_ensemble.exceptions import UnknownBackendError
@@ -36,7 +36,6 @@ from core.workflow.nodes.parallel_ensemble.registry import (
     LocalModelRegistry,
     ModelRegistry,
 )
-
 
 REPO_ROOT = Path(__file__).resolve().parents[7]
 MODEL_INFO_JSON = REPO_ROOT / "docs" / "ModelNet" / "model_info.json"
