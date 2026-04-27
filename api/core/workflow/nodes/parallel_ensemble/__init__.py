@@ -15,8 +15,9 @@ from __future__ import annotations
 # backends/ must register ``LlamaCppSpec`` before ``ModelRegistry._load``
 # can resolve a yaml entry's backend string. Runners / aggregators land
 # alongside in P2.5 / P2.6 — wire them here too at that point.
+from . import aggregators as aggregators
 from . import backends as backends
 
 PARALLEL_ENSEMBLE_NODE_TYPE = "parallel-ensemble"
 
-__all__ = ["PARALLEL_ENSEMBLE_NODE_TYPE", "backends"]
+__all__ = ["PARALLEL_ENSEMBLE_NODE_TYPE", "aggregators", "backends"]
