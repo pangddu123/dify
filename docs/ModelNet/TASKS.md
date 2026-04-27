@@ -3,7 +3,7 @@
 > **配套文档**：`DEVELOPMENT_PLAN.md` v2.4 + `EXTENSIBILITY_SPEC.md` v0.2.2（三轴 SPI 详细契约）。本文档是把这两份计划落到可勾选动作的执行清单。
 > **路径决定**（2026-04-18）：ModelSpec / LlamaCppClient 放 `api/core/workflow/nodes/parallel_ensemble/llama_cpp/`（和 Phase 2 节点同包），不放 v2 计划早期写的 `api/core/model_runtime/local_models/` —— 因为 `api/core/model_runtime/` 在当前 fork 已不存在。
 > **v2.4 SPI 融入**（2026-04-27）：原伴生文档 EXTENSIBILITY_SPEC v0.2.2 的 §11.1 重排表 + §11.3 v0.3 backend pack 已融入主计划；Phase 2 子任务 15 → 18（新增 P2.1.5 SPI 冻结 / P2.2.4 BACKEND_CAPABILITIES / P2.6.5 ResponseLevelRunner），新增 Phase 4 (5 个子任务)。
-> **总任务数**：36（Phase 0: 2 / Phase 1: 8 / Phase 2: 18 / Phase 3: 3 / Phase 4: 5）；**已完整完成 10**（Phase 0: 2/2、Phase 1: 7/8、Phase 2: 1/18），**部分完成 1**（Phase 1 P1.8 仅静态部分，dev server 联调延后）
+> **总任务数**：36（Phase 0: 2 / Phase 1: 8 / Phase 2: 18 / Phase 3: 3 / Phase 4: 5）；**已完整完成 11**（Phase 0: 2/2、Phase 1: 7/8、Phase 2: 2/18 — P2.1 + P2.1.5），**部分完成 1**（Phase 1 P1.8 仅静态部分，dev server 联调延后）
 
 ---
 
