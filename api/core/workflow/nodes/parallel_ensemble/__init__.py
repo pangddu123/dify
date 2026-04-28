@@ -9,16 +9,22 @@ calls ``ModelRegistry.instance()``.
 
 from __future__ import annotations
 
+PARALLEL_ENSEMBLE_NODE_TYPE = "parallel-ensemble"
+
 # Side-effect imports — populate the three registries so ``ModelRegistry``
 # can dispatch ``backend: llama_cpp`` yaml entries without callers
 # remembering to import the backend module first. Order matters:
 # backends/ must register ``LlamaCppSpec`` before ``ModelRegistry._load``
 # can resolve a yaml entry's backend string. Runners / aggregators land
-# alongside in P2.5 / P2.6 — wire them here too at that point.
+# alongside in P2.5 / P2.6.
+#
+# These imports run *after* the constant above so ``entities.py`` /
+# ``node.py`` (which import the constant at module scope) can be loaded
+# from ``parallel_ensemble`` without circular pain. ``aggregators`` /
+# ``backends`` / ``runners`` do not depend on the node class, so
+# importing them here is purely a registration side-effect.
 from . import aggregators as aggregators
 from . import backends as backends
 from . import runners as runners
-
-PARALLEL_ENSEMBLE_NODE_TYPE = "parallel-ensemble"
 
 __all__ = ["PARALLEL_ENSEMBLE_NODE_TYPE", "aggregators", "backends", "runners"]
