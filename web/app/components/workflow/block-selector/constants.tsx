@@ -129,6 +129,11 @@ export const BLOCKS = [
   },
   {
     classification: BlockClassificationEnum.Transform,
+    type: BlockEnum.ParallelEnsemble,
+    title: 'Parallel Ensemble',
+  },
+  {
+    classification: BlockClassificationEnum.Transform,
     type: BlockEnum.DocExtractor,
     title: 'Doc Extractor',
   },

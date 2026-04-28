@@ -4,6 +4,7 @@ import codeDefault from '@/app/components/workflow/nodes/code/default'
 
 import documentExtractorDefault from '@/app/components/workflow/nodes/document-extractor/default'
 import ensembleAggregatorDefault from '@/app/components/workflow/nodes/ensemble-aggregator/default'
+import parallelEnsembleDefault from '@/app/components/workflow/nodes/parallel-ensemble/default'
 
 import httpRequestDefault from '@/app/components/workflow/nodes/http/default'
 import humanInputDefault from '@/app/components/workflow/nodes/human-input/default'
@@ -38,6 +39,7 @@ export const WORKFLOW_COMMON_NODES = [
   templateTransformDefault,
   variableAggregatorDefault,
   ensembleAggregatorDefault,
+  parallelEnsembleDefault,
   documentExtractorDefault,
   assignerDefault,
   parameterExtractorDefault,

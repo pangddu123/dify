@@ -34,6 +34,8 @@ import LLMNode from './llm/node'
 import LLMPanel from './llm/panel'
 import LoopNode from './loop/node'
 import LoopPanel from './loop/panel'
+import ParallelEnsembleNode from './parallel-ensemble/node'
+import ParallelEnsemblePanel from './parallel-ensemble/panel'
 import ParameterExtractorNode from './parameter-extractor/node'
 import ParameterExtractorPanel from './parameter-extractor/panel'
 import QuestionClassifierNode from './question-classifier/node'
@@ -69,6 +71,7 @@ export const NodeComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.Assigner]: AssignerNode,
   [BlockEnum.VariableAggregator]: VariableAssignerNode,
   [BlockEnum.EnsembleAggregator]: EnsembleAggregatorNode,
+  [BlockEnum.ParallelEnsemble]: ParallelEnsembleNode,
   [BlockEnum.ParameterExtractor]: ParameterExtractorNode,
   [BlockEnum.Iteration]: IterationNode,
   [BlockEnum.Loop]: LoopNode,
@@ -98,6 +101,7 @@ export const PanelComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.VariableAssigner]: VariableAssignerPanel,
   [BlockEnum.VariableAggregator]: VariableAssignerPanel,
   [BlockEnum.EnsembleAggregator]: EnsembleAggregatorPanel,
+  [BlockEnum.ParallelEnsemble]: ParallelEnsemblePanel,
   [BlockEnum.Assigner]: AssignerPanel,
   [BlockEnum.ParameterExtractor]: ParameterExtractorPanel,
   [BlockEnum.Iteration]: IterationPanel,

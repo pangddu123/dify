@@ -2210,6 +2210,23 @@ export const getNodeOutputVars = (
       res.push([id, 'metadata'])
       break
     }
+
+    case BlockEnum.ParallelEnsemble: {
+      // Matches backend ``_finalize_outputs`` (api/core/workflow/nodes/
+      // parallel_ensemble/node.py:494): always emits text + tokens_count
+      // + elapsed_ms; ``trace`` rides along only when
+      // ``diagnostics.storage === 'inline'``. The selector list is the
+      // *upper bound* the canvas enumerates — at runtime an unset
+      // ``trace`` selector resolves to undefined the same way an
+      // unselected branch does, so listing it unconditionally here is
+      // safe and surfaces the var to downstream nodes when the user
+      // does flip storage to inline.
+      res.push([id, 'text'])
+      res.push([id, 'tokens_count'])
+      res.push([id, 'elapsed_ms'])
+      res.push([id, 'trace'])
+      break
+    }
   }
 
   return res

@@ -57,6 +57,7 @@ export enum BlockEnum {
   TriggerWebhook = 'trigger-webhook',
   TriggerPlugin = 'trigger-plugin',
   EnsembleAggregator = 'ensemble-aggregator',
+  ParallelEnsemble = 'parallel-ensemble',
 }
 
 export enum ControlMode {
