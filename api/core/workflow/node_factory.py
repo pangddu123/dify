@@ -1,6 +1,7 @@
 import importlib
 import pkgutil
 from collections.abc import Callable, Iterator, Mapping, MutableMapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, cast, final, override
@@ -37,6 +38,13 @@ from core.workflow.nodes.agent.plugin_strategy_adapter import (
     PluginAgentStrategyResolver,
 )
 from core.workflow.nodes.agent.runtime_support import AgentRuntimeSupport
+from core.workflow.nodes.parallel_ensemble import PARALLEL_ENSEMBLE_NODE_TYPE
+from core.workflow.nodes.parallel_ensemble.registry import (
+    AggregatorRegistry,
+    BackendRegistry,
+    ModelRegistry,
+    RunnerRegistry,
+)
 from core.workflow.system_variables import SystemVariableKey, get_system_text, system_variable_selector
 from core.workflow.template_rendering import CodeExecutorJinja2TemplateRenderer
 from extensions.ext_database import db
@@ -340,6 +348,19 @@ class DifyNodeFactory(NodeFactory):
         self._agent_strategy_presentation_provider = PluginAgentStrategyPresentationProvider()
         self._agent_runtime_support = AgentRuntimeSupport()
         self._agent_message_transformer = AgentMessageTransformer()
+        # Lazy: only built when this graph actually contains a parallel-ensemble
+        # node. One pool is shared by every parallel-ensemble node in this
+        # workflow run (factories are per-run), bounding the thread count
+        # under fan-out load (TASKS.md R10).
+        self._parallel_ensemble_executor: ThreadPoolExecutor | None = None
+
+    def _get_parallel_ensemble_executor(self) -> ThreadPoolExecutor:
+        if self._parallel_ensemble_executor is None:
+            self._parallel_ensemble_executor = ThreadPoolExecutor(
+                max_workers=dify_config.PARALLEL_ENSEMBLE_MAX_WORKERS,
+                thread_name_prefix="parallel-ensemble",
+            )
+        return self._parallel_ensemble_executor
 
     @staticmethod
     def _resolve_dify_context(run_context: Mapping[str, Any]) -> DifyRunContext:
@@ -432,6 +453,14 @@ class DifyNodeFactory(NodeFactory):
                 "presentation_provider": self._agent_strategy_presentation_provider,
                 "runtime_support": self._agent_runtime_support,
                 "message_transformer": self._agent_message_transformer,
+            },
+            PARALLEL_ENSEMBLE_NODE_TYPE: lambda: {
+                "model_registry": ModelRegistry.instance(),
+                "runner_registry": RunnerRegistry,
+                "aggregator_registry": AggregatorRegistry,
+                "backend_registry": BackendRegistry,
+                "executor": self._get_parallel_ensemble_executor(),
+                "http_client": self._http_request_http_client,
             },
         }
         node_init_kwargs = node_init_kwargs_factories.get(node_type, lambda: {})()

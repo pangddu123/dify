@@ -7,6 +7,7 @@ from core.app.entities.app_invoke_entities import DIFY_RUN_CONTEXT_KEY, DifyRunC
 from core.workflow import node_factory
 from core.workflow import template_rendering as workflow_template_rendering
 from core.workflow.nodes.knowledge_index import KNOWLEDGE_INDEX_NODE_TYPE
+from core.workflow.nodes.parallel_ensemble import PARALLEL_ENSEMBLE_NODE_TYPE
 from graphon.entities.base_node_data import BaseNodeData
 from graphon.enums import BuiltinNodeTypes, NodeType
 from graphon.nodes.code.entities import CodeLanguage
@@ -378,6 +379,7 @@ class TestDifyNodeFactoryCreateNode:
         factory._http_request_config = sentinel.http_request_config
         factory._llm_credentials_provider = sentinel.credentials_provider
         factory._llm_model_factory = sentinel.model_factory
+        factory._parallel_ensemble_executor = None
         return factory
 
     def test_rejects_unknown_node_type(self, factory):
@@ -586,6 +588,79 @@ class TestDifyNodeFactoryCreateNode:
         assert constructor_kwargs["memory"] is sentinel.memory
         for key, value in expected_extra_kwargs.items():
             assert constructor_kwargs[key] is value
+
+    def test_creates_parallel_ensemble_node(self, monkeypatch, factory):
+        """parallel-ensemble injection branch wires the four registries +
+        a shared executor + the ssrf-proxy http client.
+
+        The four registries are class-level singletons (or a yaml-backed
+        ``ModelRegistry.instance()``) — the kwargs identity is what
+        matters here, so we assert ``is`` against the registry classes
+        themselves, not against a freshly constructed mock.
+        """
+        from core.workflow.nodes.parallel_ensemble.registry import (
+            AggregatorRegistry,
+            BackendRegistry,
+            ModelRegistry,
+            RunnerRegistry,
+        )
+
+        executor = sentinel.parallel_ensemble_executor
+        thread_pool_executor = MagicMock(return_value=executor)
+        monkeypatch.setattr(node_factory, "ThreadPoolExecutor", thread_pool_executor)
+        model_registry_instance = MagicMock()
+        monkeypatch.setattr(ModelRegistry, "instance", MagicMock(return_value=model_registry_instance))
+
+        constructor = MagicMock(name="ParallelEnsembleNode", return_value=sentinel.parallel_ensemble_node)
+        monkeypatch.setattr(
+            factory,
+            "_resolve_node_class",
+            MagicMock(return_value=constructor),
+        )
+
+        result = factory.create_node({"id": "node-id", "data": {"type": PARALLEL_ENSEMBLE_NODE_TYPE}})
+
+        assert result is sentinel.parallel_ensemble_node
+        kwargs = constructor.call_args.kwargs
+        assert kwargs["id"] == "node-id"
+        _assert_typed_node_config(kwargs["config"], node_id="node-id", node_type=PARALLEL_ENSEMBLE_NODE_TYPE)
+        assert kwargs["graph_init_params"] is sentinel.graph_init_params
+        assert kwargs["graph_runtime_state"] is factory.graph_runtime_state
+        assert kwargs["model_registry"] is model_registry_instance
+        assert kwargs["runner_registry"] is RunnerRegistry
+        assert kwargs["aggregator_registry"] is AggregatorRegistry
+        assert kwargs["backend_registry"] is BackendRegistry
+        assert kwargs["executor"] is executor
+        # Production wires the same SSRF-proxied http client the HTTP-request node uses.
+        assert kwargs["http_client"] is sentinel.http_client
+        thread_pool_executor.assert_called_once()
+
+    def test_parallel_ensemble_executor_is_lazy_and_cached(self, monkeypatch, factory):
+        """Lazy: the pool is *not* built when the factory boots.
+        Cached: a second parallel-ensemble node in the same workflow
+        reuses the same executor (TASKS.md R10 — bounded thread count
+        across fan-out)."""
+        executor = sentinel.parallel_ensemble_executor
+        thread_pool_executor = MagicMock(return_value=executor)
+        monkeypatch.setattr(node_factory, "ThreadPoolExecutor", thread_pool_executor)
+        from core.workflow.nodes.parallel_ensemble.registry import ModelRegistry
+
+        monkeypatch.setattr(ModelRegistry, "instance", MagicMock(return_value=MagicMock()))
+
+        # Pool is not yet created — the lazy attribute starts at None.
+        assert factory._parallel_ensemble_executor is None
+        thread_pool_executor.assert_not_called()
+
+        constructor = MagicMock(return_value=sentinel.parallel_ensemble_node)
+        monkeypatch.setattr(factory, "_resolve_node_class", MagicMock(return_value=constructor))
+
+        factory.create_node({"id": "node-a", "data": {"type": PARALLEL_ENSEMBLE_NODE_TYPE}})
+        factory.create_node({"id": "node-b", "data": {"type": PARALLEL_ENSEMBLE_NODE_TYPE}})
+
+        # Second call reuses the executor.
+        thread_pool_executor.assert_called_once()
+        assert constructor.call_args_list[0].kwargs["executor"] is executor
+        assert constructor.call_args_list[1].kwargs["executor"] is executor
 
 
 class TestDifyNodeFactoryModelInstance:
