@@ -47,7 +47,7 @@ const ControlField: FC<{
   // a generic label when the locale file is missing the entry.
   const label = t(labelKey, { ns: 'workflow', defaultValue: labelKey })
   const tooltipResolved = t(tooltipKey, { ns: 'workflow', defaultValue: '' })
-  const tooltip = tooltipResolved ? tooltipResolved : undefined
+  const tooltip = tooltipResolved || undefined
 
   // Reflective dispatch by control type. Rendering the *unknown
   // control* branch as a visible warning rather than a silent skip
@@ -59,7 +59,7 @@ const ControlField: FC<{
       <Field title={label} tooltip={tooltip}>
         <div
           role="alert"
-          className="rounded-md border border-state-warning-border bg-state-warning-hover-alt px-3 py-2 system-xs-medium text-text-warning-secondary"
+          className="rounded-md border border-components-panel-border bg-state-warning-hover-alt px-3 py-2 system-xs-medium text-text-warning-secondary"
         >
           {t('nodes.parallelEnsemble.errorMsg.unknownUiControl', {
             ns: 'workflow',
@@ -207,7 +207,7 @@ const ControlField: FC<{
       // authors the wiring is not yet plumbed.
       return (
         <Field title={label} tooltip={tooltip}>
-          <div className="rounded-md border border-components-panel-border bg-components-panel-bg-subtle px-3 py-2 system-xs-regular text-text-tertiary">
+          <div className="rounded-md border border-components-panel-border bg-components-panel-bg-alt px-3 py-2 system-xs-regular text-text-tertiary">
             {t('nodes.parallelEnsemble.errorMsg.modelAliasSelectNotPlumbed', {
               ns: 'workflow',
             })}
@@ -253,7 +253,8 @@ const DynamicConfigForm: FC<Props> = ({
     <div className="space-y-3">
       {fieldNames.map((name) => {
         const field = uiSchema[name]
-        if (!field) return null
+        if (!field)
+          return null
         return (
           <ControlField
             key={name}

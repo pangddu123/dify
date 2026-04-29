@@ -8,10 +8,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@langgenius/dify-ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
 import * as React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
 
 type Props = {
   readonly: boolean
@@ -155,7 +155,10 @@ const ModelSelector: FC<Props> = ({
                   {info.id}
                 </span>
                 <span className="system-xs-regular text-text-tertiary">
-                  {info.backend} · {info.model_name}
+                  {info.backend}
+                  {' '}
+                  ·
+                  {info.model_name}
                 </span>
               </div>
               {isSelected && (

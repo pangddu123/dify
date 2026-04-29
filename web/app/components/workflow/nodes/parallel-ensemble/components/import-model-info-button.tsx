@@ -1,13 +1,19 @@
 'use client'
 import type { FC } from 'react'
+import { Button } from '@langgenius/dify-ui/button'
+import { toast } from '@langgenius/dify-ui/toast'
 import * as React from 'react'
 import { useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@langgenius/dify-ui/button'
-import { toast } from '@langgenius/dify-ui/toast'
 
 type Props = {
   readonly: boolean
+  // ``isLoading`` mirrors the model-registry fetch state. While the
+  // registry is still in flight ``knownAliases`` is the empty array,
+  // and *every* imported id would be filtered out — the user would see
+  // a misleading "noneMatched" toast. Disabling the button until the
+  // registry resolves is the cleanest fix.
+  isLoading?: boolean
   // Aliases registered in the backend yaml — used to filter the
   // imported list down to *known* aliases. An entry from the user's
   // hand-edited ``model_info.json`` that doesn't exist in the registry
@@ -41,7 +47,7 @@ const extractIds = (parsed: unknown): string[] => {
   return out
 }
 
-const ImportModelInfoButton: FC<Props> = ({ readonly, knownAliases, onImport }) => {
+const ImportModelInfoButton: FC<Props> = ({ readonly, isLoading = false, knownAliases, onImport }) => {
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement | null>(null)
 
@@ -69,32 +75,32 @@ const ImportModelInfoButton: FC<Props> = ({ readonly, knownAliases, onImport }) 
         const dropped = ids.length - matched.length
 
         if (matched.length === 0) {
-          toast.error({
-            message: t('nodes.parallelEnsemble.importToast.noneMatched', {
+          toast.error(
+            t('nodes.parallelEnsemble.importToast.noneMatched', {
               ns: 'workflow',
               defaultValue: 'No alias in the imported file matches the registry.',
             }),
-          })
+          )
           return
         }
 
         onImport(matched)
-        toast.success({
-          message: t('nodes.parallelEnsemble.importToast.matched', {
+        toast.success(
+          t('nodes.parallelEnsemble.importToast.matched', {
             ns: 'workflow',
             count: matched.length,
             dropped,
             defaultValue: `Imported ${matched.length} alias(es); ${dropped} dropped`,
           }),
-        })
+        )
       }
       catch (err) {
-        toast.error({
-          message: t('nodes.parallelEnsemble.importToast.parseFailed', {
+        toast.error(
+          t('nodes.parallelEnsemble.importToast.parseFailed', {
             ns: 'workflow',
             defaultValue: 'Failed to parse model_info.json',
           }),
-        })
+        )
         // Console-log the actual exception so the user can debug a
         // malformed file without the panel needing to surface raw
         // parser output. The toast keeps the user-facing message
@@ -110,7 +116,7 @@ const ImportModelInfoButton: FC<Props> = ({ readonly, knownAliases, onImport }) 
       <Button
         size="small"
         variant="secondary"
-        disabled={readonly}
+        disabled={readonly || isLoading}
         onClick={handleClick}
       >
         {t('nodes.parallelEnsemble.importModelInfo', {

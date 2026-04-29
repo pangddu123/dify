@@ -2,7 +2,7 @@ import type { FC } from 'react'
 import type { ParallelEnsembleNodeType } from './types'
 import type { NodePanelProps, ValueSelector, Var } from '@/app/components/workflow/types'
 import * as React from 'react'
-import { memo, useCallback } from 'react'
+import { memo, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import Field from '@/app/components/workflow/nodes/_base/components/field'
 import OutputVars, { VarItem } from '@/app/components/workflow/nodes/_base/components/output-vars'
@@ -79,7 +79,13 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
   // violates rules-of-hooks. ``checkValid`` still surfaces the missing
   // ``ensemble`` block structurally so this fallback never silently
   // produces a working node from invalid DSL.
-  const existingAliases = ensemble?.model_aliases ?? []
+  // ``useMemo`` keeps the array reference stable across renders so the
+  // ``handleImport`` callback's dependency array doesn't churn (eslint
+  // ``react/exhaustive-deps``).
+  const existingAliases = useMemo(
+    () => ensemble?.model_aliases ?? [],
+    [ensemble?.model_aliases],
+  )
   const handleImport = useCallback(
     (importedAliases: string[]) => {
       // Merge with existing selection rather than replacing — users
@@ -110,9 +116,9 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
       return null
     return (
       <ul className="mt-1 space-y-0.5">
-        {issues.map((issue, idx) => (
+        {issues.map(issue => (
           <li
-            key={idx}
+            key={`${field}:${issue.severity}:${issue.i18n_key ?? issue.message}`}
             className={
               issue.severity === 'error'
                 ? 'system-xs-regular text-text-warning-secondary'
@@ -121,9 +127,9 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
           >
             {issue.i18n_key
               ? t(issue.i18n_key, {
-                ns: 'workflow',
-                defaultValue: issue.message,
-              })
+                  ns: 'workflow',
+                  defaultValue: issue.message,
+                })
               : issue.message}
           </li>
         ))}
@@ -159,20 +165,23 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
           operations={(
             <ImportModelInfoButton
               readonly={readOnly}
+              isLoading={isLoadingModels}
               knownAliases={knownAliases}
               onImport={handleImport}
             />
           )}
         >
-          <ModelSelector
-            readonly={readOnly}
-            isLoading={isLoadingModels}
-            models={models}
-            requiredCapabilities={requiredCapabilities}
-            selected={ensemble.model_aliases}
-            onChange={handleModelAliasesChange}
-          />
-          {renderIssue('model_aliases')}
+          <>
+            <ModelSelector
+              readonly={readOnly}
+              isLoading={isLoadingModels}
+              models={models}
+              requiredCapabilities={requiredCapabilities}
+              selected={ensemble.model_aliases}
+              onChange={handleModelAliasesChange}
+            />
+            {renderIssue('model_aliases')}
+          </>
         </Field>
 
         {/* Section 3 — Runner (cooperation mode) */}
@@ -210,15 +219,17 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
           tooltip={t(`${i18nPrefix}.aggregatorTooltip`, { ns: 'workflow' })}
           required
         >
-          <AggregatorSelector
-            readonly={readOnly}
-            isLoading={isLoadingAggregators}
-            aggregators={aggregators}
-            requiredScope={requiredScope}
-            selectedName={ensemble.aggregator_name}
-            onChange={handleAggregatorChange}
-          />
-          {renderIssue('aggregator_name')}
+          <>
+            <AggregatorSelector
+              readonly={readOnly}
+              isLoading={isLoadingAggregators}
+              aggregators={aggregators}
+              requiredScope={requiredScope}
+              selectedName={ensemble.aggregator_name}
+              onChange={handleAggregatorChange}
+            />
+            {renderIssue('aggregator_name')}
+          </>
         </Field>
         {selectedAggregator && Object.keys(selectedAggregator.ui_schema).length > 0 && (
           <Field

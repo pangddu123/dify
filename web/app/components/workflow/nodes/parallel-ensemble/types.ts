@@ -30,7 +30,7 @@ export type UiFieldSchema = {
   max?: number
   step?: number
   // select / multi_select
-  options?: ReadonlyArray<{ value: string | number; label?: string }>
+  options?: ReadonlyArray<{ value: string | number, label?: string }>
 }
 
 export type UiSchema = Record<string, UiFieldSchema>

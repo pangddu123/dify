@@ -23,16 +23,23 @@ const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
   const runnersQuery = useRunners()
   const aggregatorsQuery = useAggregators()
 
-  const models: ReadonlyArray<BackendInfo> = useMemo(
-    () => localModelsQuery.data?.models ?? [],
+  // The orpc/contract ``type<T>()`` machinery widens the inner
+  // ``options`` field to ``unknown`` when the runner / aggregator
+  // ui_schema arrives over the wire — re-cast through the SPI types
+  // so the rest of the hook sees the same shape ``RunnerMeta`` /
+  // ``AggregatorMeta`` declare. The contract still pins the wire
+  // schema (``contract/console/parallel-ensemble.ts``); the assertion
+  // is purely a TypeScript-side narrowing.
+  const models = useMemo<ReadonlyArray<BackendInfo>>(
+    () => (localModelsQuery.data?.models ?? []) as ReadonlyArray<BackendInfo>,
     [localModelsQuery.data],
   )
-  const runners: ReadonlyArray<RunnerMeta> = useMemo(
-    () => runnersQuery.data?.runners ?? [],
+  const runners = useMemo<ReadonlyArray<RunnerMeta>>(
+    () => (runnersQuery.data?.runners ?? []) as ReadonlyArray<RunnerMeta>,
     [runnersQuery.data],
   )
-  const aggregators: ReadonlyArray<AggregatorMeta> = useMemo(
-    () => aggregatorsQuery.data?.aggregators ?? [],
+  const aggregators = useMemo<ReadonlyArray<AggregatorMeta>>(
+    () => (aggregatorsQuery.data?.aggregators ?? []) as ReadonlyArray<AggregatorMeta>,
     [aggregatorsQuery.data],
   )
 
@@ -52,7 +59,13 @@ const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
     [aggregators, aggregatorName],
   )
 
-  const aliases: ReadonlyArray<string> = inputs.ensemble?.model_aliases ?? []
+  // ``useMemo`` keeps the array reference stable so the
+  // ``validationIssues`` recompute doesn't churn on every render
+  // (eslint ``react/exhaustive-deps``).
+  const aliases = useMemo<ReadonlyArray<string>>(
+    () => inputs.ensemble?.model_aliases ?? [],
+    [inputs.ensemble?.model_aliases],
+  )
 
   // ── Local capability check ──────────────────────────────────────
   //
