@@ -1,8 +1,8 @@
 import type { ValueSelector, Var } from '../../types'
 import type {
   AggregationInputRef,
-  ConcatConfig,
   EnsembleAggregatorNodeType,
+  EnsembleStrategyConfig,
   EnsembleStrategyName,
 } from './types'
 import { produce } from 'immer'
@@ -27,6 +27,15 @@ const TEXT_COMPATIBLE_VAR_TYPES: VarType[] = [
   VarType.any,
 ]
 
+// Weight var-reference picker accepts the numeric-shaped types only —
+// string / object / array would either need coercion (silent drift) or
+// break the backend's finite-number guard. Match backend
+// ``_resolve_weight`` which expects ``int | float`` from the var pool.
+const NUMERIC_VAR_TYPES: VarType[] = [
+  VarType.number,
+  VarType.any,
+]
+
 const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
   const { nodesReadOnly: readOnly } = useNodesReadOnly()
   const { inputs, setInputs } = useNodeCrud<EnsembleAggregatorNodeType>(id, payload)
@@ -35,9 +44,13 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
     return TEXT_COMPATIBLE_VAR_TYPES.includes(varPayload.type)
   }, [])
 
+  const filterNumericVar = useCallback((varPayload: Var) => {
+    return NUMERIC_VAR_TYPES.includes(varPayload.type)
+  }, [])
+
   // `VarReferencePicker` (used inside `InputList`) runs its own
   // `useAvailableVarList` when rendered, so computing/returning the list
-  // here is a redundant walk of the graph. Keep only `filterStringVar`,
+  // here is a redundant walk of the graph. Keep only the filter helpers,
   // which the picker needs via props.
 
   const nextDefaultSourceId = useCallback((refs: AggregationInputRef[]) => {
@@ -56,6 +69,15 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
       draft.inputs.push({
         source_id: nextDefaultSourceId(draft.inputs),
         variable_selector: [],
+        // ``1.0`` keeps v2.4 unweighted majority-vote behaviour intact —
+        // backend ``majority_vote`` collapses to plain integer counts
+        // when every weight is unit, so adding a fresh input never
+        // perturbs an existing all-unit ensemble.
+        weight: 1,
+        // ``null`` = fail-fast on dynamic weight resolution failure
+        // (ADR-v3-15). Operators opt into graceful degrade explicitly.
+        fallback_weight: null,
+        extra: {},
       })
     })
     setInputs(next)
@@ -87,6 +109,28 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
     [inputs, setInputs],
   )
 
+  const handleWeightChange = useCallback(
+    (index: number, value: number | ValueSelector) => {
+      const next = produce(inputs, (draft) => {
+        if (draft.inputs[index])
+          draft.inputs[index].weight = value
+      })
+      setInputs(next)
+    },
+    [inputs, setInputs],
+  )
+
+  const handleFallbackWeightChange = useCallback(
+    (index: number, value: number | null) => {
+      const next = produce(inputs, (draft) => {
+        if (draft.inputs[index])
+          draft.inputs[index].fallback_weight = value
+      })
+      setInputs(next)
+    },
+    [inputs, setInputs],
+  )
+
   const handleStrategyChange = useCallback((name: EnsembleStrategyName) => {
     const next = produce(inputs, (draft) => {
       draft.strategy_name = name
@@ -98,20 +142,14 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
   }, [inputs, setInputs])
 
   const handleStrategyConfigChange = useCallback(
-    (patch: Partial<ConcatConfig>) => {
+    (patch: EnsembleStrategyConfig) => {
+      // ``DynamicConfigForm`` already handles the "patch contains all
+      // current keys minus deletions" semantics for us: it emits the
+      // full ``ConfigBlob`` snapshot (with any ``undefined`` keys
+      // already stripped via that component's ``handlePatchKey``).
+      // Treat the patch as the new authoritative ``strategy_config``.
       const next = produce(inputs, (draft) => {
-        const merged: Record<string, unknown> = { ...draft.strategy_config }
-        // `undefined` in the patch means "remove the key" so the backend
-        // falls back to its Pydantic default. Spread-merging would keep
-        // the undefined value, which then gets serialized as explicit
-        // `null`/omitted inconsistently by downstream encoders.
-        for (const [key, value] of Object.entries(patch)) {
-          if (value === undefined)
-            delete merged[key]
-          else
-            merged[key] = value
-        }
-        draft.strategy_config = merged
+        draft.strategy_config = { ...patch }
       })
       setInputs(next)
     },
@@ -122,10 +160,13 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
     readOnly,
     inputs,
     filterStringVar,
+    filterNumericVar,
     handleAddInput,
     handleRemoveInput,
     handleSourceIdChange,
     handleVariableSelectorChange,
+    handleWeightChange,
+    handleFallbackWeightChange,
     handleStrategyChange,
     handleStrategyConfigChange,
   }

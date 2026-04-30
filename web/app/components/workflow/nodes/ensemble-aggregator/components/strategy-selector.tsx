@@ -1,7 +1,6 @@
 'use client'
 import type { FC } from 'react'
 import type {
-  ConcatConfig,
   EnsembleStrategyConfig,
   EnsembleStrategyName,
 } from '../types'
@@ -12,13 +11,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@langgenius/dify-ui/dropdown-menu'
-import { Switch } from '@langgenius/dify-ui/switch'
 import * as React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import Input from '@/app/components/base/input'
 import Field from '@/app/components/workflow/nodes/_base/components/field'
-import { DEFAULT_CONCAT_SEPARATOR, ENSEMBLE_STRATEGY_NAMES } from '../types'
+import DynamicConfigForm from '@/app/components/workflow/nodes/parallel-ensemble/components/dynamic-config-form'
+import {
+  ENSEMBLE_STRATEGY_META,
+  ENSEMBLE_STRATEGY_NAMES,
+} from '../types'
 
 const i18nPrefix = 'nodes.ensembleAggregator'
 
@@ -27,7 +28,7 @@ type Props = {
   strategyName: EnsembleStrategyName
   strategyConfig: EnsembleStrategyConfig
   onStrategyChange: (name: EnsembleStrategyName) => void
-  onStrategyConfigChange: (patch: Partial<ConcatConfig>) => void
+  onStrategyConfigChange: (next: EnsembleStrategyConfig) => void
 }
 
 const StrategySelector: FC<Props> = ({
@@ -51,27 +52,14 @@ const StrategySelector: FC<Props> = ({
     [onStrategyChange, strategyName],
   )
 
-  const handleSeparatorChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const value = e.target.value
-      // Emit `undefined` on an empty field so use-config drops the key
-      // entirely — the backend only applies the default separator when
-      // the key is absent, not when it is set to "".
-      onStrategyConfigChange({ separator: value === '' ? undefined : value })
-    },
-    [onStrategyConfigChange],
-  )
-
-  const handleLabelToggle = useCallback(
-    (checked: boolean) => {
-      onStrategyConfigChange({ include_source_label: checked })
-    },
-    [onStrategyConfigChange],
-  )
-
-  const concatConfig = strategyName === 'concat'
-    ? (strategyConfig as ConcatConfig)
-    : {}
+  const meta = ENSEMBLE_STRATEGY_META[strategyName]
+  // ``ui_schema`` is the per-strategy config schema mirror (P3.A.2 +
+  // ADR-v3-9). When non-empty, render via the shared
+  // ``DynamicConfigForm`` so the form is reflective — adding a new
+  // strategy with ``ui_schema`` declarations gets a working panel
+  // without touching this file. Empty schemas (e.g. ``majority_vote`` /
+  // ``weighted_majority_vote``) render a hint only.
+  const hasSchema = meta && Object.keys(meta.ui_schema).length > 0
 
   return (
     <div className="space-y-3">
@@ -124,39 +112,25 @@ const StrategySelector: FC<Props> = ({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {strategyName === 'majority_vote' && (
+      {!hasSchema && (
         <p className="system-xs-regular text-text-tertiary">
-          {t(`${i18nPrefix}.strategies.majority_vote.hint`, { ns: 'workflow' })}
+          {t(`${i18nPrefix}.strategies.${strategyName}.hint`, { ns: 'workflow' })}
         </p>
       )}
 
-      {strategyName === 'concat' && (
-        <div className="space-y-3">
-          <Field
-            title={t(`${i18nPrefix}.strategies.concat.separator`, { ns: 'workflow' })}
-            tooltip={t(`${i18nPrefix}.strategies.concat.separatorTooltip`, { ns: 'workflow' })}
-          >
-            <Input
-              value={concatConfig.separator ?? ''}
-              onChange={handleSeparatorChange}
-              placeholder={DEFAULT_CONCAT_SEPARATOR}
-              disabled={readonly}
-            />
-          </Field>
-          <Field
-            title={t(`${i18nPrefix}.strategies.concat.includeSourceLabel`, { ns: 'workflow' })}
-            tooltip={t(`${i18nPrefix}.strategies.concat.includeSourceLabelTooltip`, { ns: 'workflow' })}
-            inline
-            operations={(
-              <Switch
-                checked={concatConfig.include_source_label ?? false}
-                onCheckedChange={handleLabelToggle}
-                size="md"
-                disabled={readonly}
-              />
-            )}
+      {hasSchema && (
+        <Field
+          title={t(`${i18nPrefix}.strategyConfig`, { ns: 'workflow' })}
+          isSubTitle
+        >
+          <DynamicConfigForm
+            i18nKeyPrefix={meta.i18n_key_prefix}
+            uiSchema={meta.ui_schema}
+            value={strategyConfig}
+            readonly={readonly}
+            onChange={onStrategyConfigChange}
           />
-        </div>
+        </Field>
       )}
     </div>
   )

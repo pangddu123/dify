@@ -1,35 +1,95 @@
+import type { UiSchema } from '@/app/components/workflow/nodes/parallel-ensemble/types'
 import type { CommonNodeType, ValueSelector } from '@/app/components/workflow/types'
 
 export const ENSEMBLE_AGGREGATOR_NODE_TYPE = 'ensemble-aggregator' as const
 
-export type EnsembleStrategyName = 'majority_vote' | 'concat'
+export type EnsembleStrategyName
+  = | 'majority_vote'
+    | 'concat'
+    | 'weighted_majority_vote'
 
 export const ENSEMBLE_STRATEGY_NAMES: EnsembleStrategyName[] = [
   'majority_vote',
   'concat',
+  'weighted_majority_vote',
 ]
 
-// Config shape for `concat`. `majority_vote` currently takes no options;
-// the backend enforces `extra="forbid"`, so any unknown keys submitted
-// in `strategy_config` are rejected at run time.
+// Mirrors backend ``concat._ConcatConfig`` (api/core/workflow/nodes/
+// ensemble_aggregator/strategies/concat.py). v3 added ``order_by_weight``
+// — when on, the strategy sorts fragments by descending source weight
+// before joining.
 export type ConcatConfig = {
   separator?: string
   include_source_label?: boolean
+  order_by_weight?: boolean
 }
 
 export const DEFAULT_CONCAT_SEPARATOR = '\n\n---\n\n'
 
-// Matches backend `dict[str, object]`. Strategy-specific shapes
-// (e.g. `ConcatConfig`) are narrowed inside the strategy selector.
+// Matches backend ``dict[str, object]``. Strategy-specific shapes
+// (e.g. ``ConcatConfig``) are narrowed inside the strategy selector.
 export type EnsembleStrategyConfig = Record<string, unknown>
 
-// Mirrors backend `AggregationInputRef` (api/core/workflow/nodes/
-// ensemble_aggregator/entities.py). `variable_selector` stays as the
-// graphon selector shape (`[node_id, key, ...]`) — same as every other
-// workflow node's upstream reference.
+// Per-strategy ui_schema mirror. Mirrors what backend
+// ``list_strategies()`` exposes (api/core/workflow/nodes/
+// ensemble_aggregator/strategies/registry.py:list_strategies); ships
+// statically here because the strategy set is closed and built into
+// this node — the backend's ``extra="forbid"`` on each strategy's
+// config_class catches drift if a key is added on one side only.
+//
+// ``i18n_key_prefix`` matches the backend ``i18n_key_prefix`` ClassVar
+// so dynamic-config-form looks up
+// ``<prefix>.fields.<field>.{label,tooltip}`` consistently with how
+// parallel-ensemble drives runner / aggregator forms.
+export type EnsembleStrategyMeta = {
+  name: EnsembleStrategyName
+  i18n_key_prefix: string
+  ui_schema: UiSchema
+}
+
+export const ENSEMBLE_STRATEGY_META: Record<
+  EnsembleStrategyName,
+  EnsembleStrategyMeta
+> = {
+  majority_vote: {
+    name: 'majority_vote',
+    i18n_key_prefix: 'nodes.ensembleAggregator.majorityVote',
+    ui_schema: {},
+  },
+  concat: {
+    name: 'concat',
+    i18n_key_prefix: 'nodes.ensembleAggregator.concat',
+    ui_schema: {
+      separator: { control: 'text_input' },
+      include_source_label: { control: 'switch' },
+      order_by_weight: { control: 'switch' },
+    },
+  },
+  weighted_majority_vote: {
+    name: 'weighted_majority_vote',
+    i18n_key_prefix: 'nodes.ensembleAggregator.weightedMajorityVote',
+    ui_schema: {},
+  },
+}
+
+// Static + dynamic weight surfaces mirror backend ``AggregationInputRef.
+// weight`` (Pydantic ``float | list[str]``). The ``list[str]`` branch is a
+// ``VariableSelector`` resolved at runtime against the variable pool —
+// same shape as ``variable_selector`` so the runtime resolver doesn't
+// have to special-case malformed input. ADR-v3-15.
 export type AggregationInputRef = {
   source_id: string
   variable_selector: ValueSelector
+  weight: number | ValueSelector
+  // Numeric fallback when a dynamic weight selector fails to resolve.
+  // ``null`` (default) = fail-fast: the backend raises
+  // ``WeightResolutionError`` and the node FAILs.
+  fallback_weight: number | null
+  // Per-source pass-through metadata. Surfaced to strategies via
+  // ``SourceAggregationContext.source_meta`` server-side; UI keeps the
+  // dict shape so authors of custom strategies can ride extra context
+  // (e.g. ``{"confidence_tier": "high"}``) without DSL edits.
+  extra: Record<string, unknown>
 }
 
 export type EnsembleAggregatorNodeType = CommonNodeType & {

@@ -23,10 +23,13 @@ const Panel: FC<NodePanelProps<EnsembleAggregatorNodeType>> = ({
     readOnly,
     inputs,
     filterStringVar,
+    filterNumericVar,
     handleAddInput,
     handleRemoveInput,
     handleSourceIdChange,
     handleVariableSelectorChange,
+    handleWeightChange,
+    handleFallbackWeightChange,
     handleStrategyChange,
     handleStrategyConfigChange,
   } = useConfig(id, data)
@@ -47,7 +50,10 @@ const Panel: FC<NodePanelProps<EnsembleAggregatorNodeType>> = ({
             onRemove={handleRemoveInput}
             onSourceIdChange={handleSourceIdChange}
             onVariableSelectorChange={handleVariableSelectorChange}
+            onWeightChange={handleWeightChange}
+            onFallbackWeightChange={handleFallbackWeightChange}
             filterVar={filterStringVar}
+            filterNumericVar={filterNumericVar}
           />
         </Field>
 
