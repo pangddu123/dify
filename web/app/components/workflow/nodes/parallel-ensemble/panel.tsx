@@ -1,34 +1,20 @@
 import type { FC } from 'react'
 import type { ParallelEnsembleNodeType } from './types'
-import type { NodePanelProps, ValueSelector, Var } from '@/app/components/workflow/types'
+import type { NodePanelProps } from '@/app/components/workflow/types'
 import * as React from 'react'
-import { memo, useCallback, useMemo } from 'react'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import Field from '@/app/components/workflow/nodes/_base/components/field'
 import OutputVars, { VarItem } from '@/app/components/workflow/nodes/_base/components/output-vars'
 import Split from '@/app/components/workflow/nodes/_base/components/split'
-import VarReferencePicker from '@/app/components/workflow/nodes/_base/components/variable/var-reference-picker'
-import { VarType } from '@/app/components/workflow/types'
 import AggregatorSelector from './components/aggregator-selector'
 import DiagnosticsConfigForm from './components/diagnostics-config'
 import DynamicConfigForm from './components/dynamic-config-form'
-import ImportModelInfoButton from './components/import-model-info-button'
-import ModelSelector from './components/model-selector'
 import RunnerSelector from './components/runner-selector'
+import TokenSourceList from './components/token-source-list'
 import useConfig from './use-config'
 
 const i18nPrefix = 'nodes.parallelEnsemble'
-
-// The question variable selector accepts text-shaped variables. Files
-// have no defined "question to ensemble" semantics so they're filtered
-// out — same logic ensemble-aggregator uses for its inputs picker.
-const TEXT_COMPATIBLE_VAR_TYPES: ReadonlyArray<VarType> = [
-  VarType.string,
-  VarType.number,
-  VarType.boolean,
-  VarType.object,
-  VarType.any,
-]
 
 const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
   id,
@@ -38,17 +24,22 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
   const {
     readOnly,
     inputs,
-    models,
     runners,
     aggregators,
     selectedRunner,
     selectedAggregator,
-    isLoadingModels,
     isLoadingRunners,
     isLoadingAggregators,
+    filterSpecVar,
+    filterNumericVar,
     validationIssues,
-    handleQuestionVariableChange,
-    handleModelAliasesChange,
+    handleAddTokenSource,
+    handleRemoveTokenSource,
+    handleSourceIdChange,
+    handleSpecSelectorChange,
+    handleWeightChange,
+    handleTopKOverrideChange,
+    handleFallbackWeightChange,
     handleRunnerChange,
     handleAggregatorChange,
     handleRunnerConfigChange,
@@ -58,54 +49,13 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
 
   const ensemble = inputs.ensemble
 
-  const filterTextVar = useCallback((v: Var) => {
-    return TEXT_COMPATIBLE_VAR_TYPES.includes(v.type)
-  }, [])
-
-  const handleSelectorChange = useCallback(
-    (value: ValueSelector | string) => {
-      // Constant strings are not a valid question source for the
-      // node — the SPI requires a runtime variable so the runner can
-      // re-template per backend at run time.
-      if (Array.isArray(value))
-        handleQuestionVariableChange(value)
-    },
-    [handleQuestionVariableChange],
-  )
-
-  // ``ensemble.model_aliases`` reads default to [] for the "DSL
-  // landed without nested ensemble block" case — the import handler
-  // hook would otherwise need to live after the early return, which
-  // violates rules-of-hooks. ``checkValid`` still surfaces the missing
-  // ``ensemble`` block structurally so this fallback never silently
-  // produces a working node from invalid DSL.
-  // ``useMemo`` keeps the array reference stable across renders so the
-  // ``handleImport`` callback's dependency array doesn't churn (eslint
-  // ``react/exhaustive-deps``).
-  const existingAliases = useMemo(
-    () => ensemble?.model_aliases ?? [],
-    [ensemble?.model_aliases],
-  )
-  const handleImport = useCallback(
-    (importedAliases: string[]) => {
-      // Merge with existing selection rather than replacing — users
-      // commonly add a few aliases manually and then bulk-import the
-      // rest from a saved JSON. ``handleModelAliasesChange`` de-dupes.
-      handleModelAliasesChange([...existingAliases, ...importedAliases])
-    },
-    [existingAliases, handleModelAliasesChange],
-  )
-
   // Defensive guard for a DSL import that landed without ``ensemble``;
   // the panel renders nothing rather than crashing on undefined access.
   // ``checkValid`` will surface a structured error in that case.
   if (!ensemble)
     return null
 
-  const requiredCapabilities = selectedRunner?.required_capabilities ?? []
   const requiredScope = selectedRunner?.aggregator_scope ?? ''
-
-  const knownAliases = models.map(m => m.id)
 
   const issuesByField = (field: string) =>
     validationIssues.filter(i => i.field === field)
@@ -140,51 +90,35 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
   return (
     <div className="pt-2">
       <div className="space-y-4 px-4 pb-2">
-        {/* Section 1 — Question variable */}
+        {/* Section 1 — Token sources (one row per upstream
+          token-model-source, ADR-v3-16). Replaces v0.2's question +
+          alias-list pair: prompt rendering and alias selection live
+          upstream now, this layer just references the spec. */}
         <Field
-          title={t(`${i18nPrefix}.questionVariable`, { ns: 'workflow' })}
-          tooltip={t(`${i18nPrefix}.questionVariableTooltip`, { ns: 'workflow' })}
+          title={t(`${i18nPrefix}.tokenSources.title`, { ns: 'workflow' })}
+          tooltip={t(`${i18nPrefix}.tokenSources.tooltip`, { ns: 'workflow' })}
           required
-        >
-          <VarReferencePicker
-            nodeId={id}
-            readonly={readOnly}
-            isShowNodeName
-            value={ensemble.question_variable}
-            onChange={handleSelectorChange}
-            filterVar={filterTextVar}
-            isSupportFileVar={false}
-          />
-        </Field>
-
-        {/* Section 2 — Models */}
-        <Field
-          title={t(`${i18nPrefix}.models`, { ns: 'workflow' })}
-          tooltip={t(`${i18nPrefix}.modelsTooltip`, { ns: 'workflow' })}
-          required
-          operations={(
-            <ImportModelInfoButton
-              readonly={readOnly}
-              isLoading={isLoadingModels}
-              knownAliases={knownAliases}
-              onImport={handleImport}
-            />
-          )}
         >
           <>
-            <ModelSelector
+            <TokenSourceList
+              nodeId={id}
               readonly={readOnly}
-              isLoading={isLoadingModels}
-              models={models}
-              requiredCapabilities={requiredCapabilities}
-              selected={ensemble.model_aliases}
-              onChange={handleModelAliasesChange}
+              list={ensemble.token_sources}
+              onAdd={handleAddTokenSource}
+              onRemove={handleRemoveTokenSource}
+              onSourceIdChange={handleSourceIdChange}
+              onSpecSelectorChange={handleSpecSelectorChange}
+              onWeightChange={handleWeightChange}
+              onTopKOverrideChange={handleTopKOverrideChange}
+              onFallbackWeightChange={handleFallbackWeightChange}
+              filterSpecVar={filterSpecVar}
+              filterNumericVar={filterNumericVar}
             />
-            {renderIssue('model_aliases')}
+            {renderIssue('token_sources')}
           </>
         </Field>
 
-        {/* Section 3 — Runner (cooperation mode) */}
+        {/* Section 2 — Runner (cooperation mode) */}
         <Field
           title={t(`${i18nPrefix}.runner`, { ns: 'workflow' })}
           tooltip={t(`${i18nPrefix}.runnerTooltip`, { ns: 'workflow' })}
@@ -213,7 +147,7 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
           </Field>
         )}
 
-        {/* Section 4 — Aggregator */}
+        {/* Section 3 — Aggregator */}
         <Field
           title={t(`${i18nPrefix}.aggregator`, { ns: 'workflow' })}
           tooltip={t(`${i18nPrefix}.aggregatorTooltip`, { ns: 'workflow' })}
@@ -249,7 +183,7 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
 
       <Split />
 
-      {/* Section 5 — Diagnostics */}
+      {/* Section 4 — Diagnostics */}
       <div className="space-y-4 px-4 pt-2 pb-2">
         <Field
           title={t(`${i18nPrefix}.diagnostics.title`, { ns: 'workflow' })}
@@ -271,11 +205,11 @@ const Panel: FC<NodePanelProps<ParallelEnsembleNodeType>> = ({
           {/*
            * Mirrors what ``ParallelEnsembleNode._finalize_outputs``
            * actually emits (api/core/workflow/nodes/parallel_ensemble/
-           * node.py:494). The ``trace`` slot is only present when
+           * node.py). The ``trace`` slot is only present when
            * ``diagnostics.storage === 'inline'`` — for ``metadata``
            * storage the trace lands in ``process_data.ensemble_trace``
            * which is *not* a variable-pool selector and so must not
-           * appear here. (See backend `_finalize_outputs` branch.)
+           * appear here.
            */}
           <>
             <VarItem

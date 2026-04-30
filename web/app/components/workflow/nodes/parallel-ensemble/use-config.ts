@@ -1,25 +1,42 @@
 import type {
   AggregatorMeta,
-  BackendInfo,
   ConfigBlob,
   DiagnosticsConfig,
   ParallelEnsembleNodeType,
   RunnerMeta,
+  TokenSourceRef,
   ValidationIssue,
 } from './types'
-import type { ValueSelector } from '@/app/components/workflow/types'
+import type { ValueSelector, Var } from '@/app/components/workflow/types'
 import { produce } from 'immer'
 import { useCallback, useMemo } from 'react'
 import { useNodesReadOnly } from '@/app/components/workflow/hooks'
 import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
+import { VarType } from '@/app/components/workflow/types'
 import { DEFAULT_DIAGNOSTICS } from './types'
-import { useAggregators, useLocalModels, useRunners } from './use-registries'
+import { useAggregators, useRunners } from './use-registries'
+
+// ``token-model-source`` outputs ``spec`` as ``object`` (see that node's
+// panel.tsx OutputVars block); accept ``any`` as a permissive fallback
+// for variables coming from third-party sources whose VarType the
+// inference layer cannot pin down.
+const SPEC_VAR_TYPES: VarType[] = [
+  VarType.object,
+  VarType.any,
+]
+
+// ``weight`` dynamic-mode picker accepts numeric-shaped types only —
+// silently coercing strings / objects to numbers would break the
+// backend's finite-number guard in ``_resolve_weight``.
+const NUMERIC_VAR_TYPES: VarType[] = [
+  VarType.number,
+  VarType.any,
+]
 
 const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
   const { nodesReadOnly: readOnly } = useNodesReadOnly()
   const { inputs, setInputs } = useNodeCrud<ParallelEnsembleNodeType>(id, payload)
 
-  const localModelsQuery = useLocalModels()
   const runnersQuery = useRunners()
   const aggregatorsQuery = useAggregators()
 
@@ -30,10 +47,6 @@ const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
   // ``AggregatorMeta`` declare. The contract still pins the wire
   // schema (``contract/console/parallel-ensemble.ts``); the assertion
   // is purely a TypeScript-side narrowing.
-  const models = useMemo<ReadonlyArray<BackendInfo>>(
-    () => (localModelsQuery.data?.models ?? []) as ReadonlyArray<BackendInfo>,
-    [localModelsQuery.data],
-  )
   const runners = useMemo<ReadonlyArray<RunnerMeta>>(
     () => (runnersQuery.data?.runners ?? []) as ReadonlyArray<RunnerMeta>,
     [runnersQuery.data],
@@ -59,50 +72,40 @@ const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
     [aggregators, aggregatorName],
   )
 
-  // ``useMemo`` keeps the array reference stable so the
-  // ``validationIssues`` recompute doesn't churn on every render
-  // (eslint ``react/exhaustive-deps``).
-  const aliases = useMemo<ReadonlyArray<string>>(
-    () => inputs.ensemble?.model_aliases ?? [],
-    [inputs.ensemble?.model_aliases],
-  )
-
-  // ── Local capability check ──────────────────────────────────────
-  //
-  // P2.11 spec mentions a real-time backend ``validate_requirements``
-  // round-trip; the v0.2 backend does not yet expose that endpoint —
-  // ``runner_cls.validate_selection`` runs at run time inside §9. So
-  // the panel mirrors what it can statically: capability subset check
-  // + scope match. Any additional rule the runner declares
-  // (``judge_alias must be in model_aliases``, ``enable_think + ≥1
-  // type=think model``, ...) surfaces server-side at run time as a
-  // structured panel error, which is the same surface this hook
-  // would render.
+  // Backend ``ParallelEnsembleNode._validate_at_startup`` runs the §9
+  // pipeline (capability filter + requirements match + cross-field) at
+  // run time against the resolved ``ModelInvocationSpec``s — selectors
+  // the panel cannot resolve statically. The only check we can do here
+  // without the live variable pool is scope-match between the runner
+  // and aggregator; capability-mismatch errors now surface server-side
+  // with structured field metadata when the spec resolves.
   const validationIssues: ValidationIssue[] = useMemo(() => {
     const issues: ValidationIssue[] = []
-    if (!selectedRunner)
-      return issues
-    const required = new Set(selectedRunner.required_capabilities)
-    if (required.size > 0) {
-      const offenders = aliases.filter((alias) => {
-        const m = models.find(x => x.id === alias)
-        if (!m)
-          return false
-        return !selectedRunner.required_capabilities.every(c =>
-          m.capabilities.includes(c),
-        )
+    // Wait for the registries before flagging "unknown" — if the fetch
+    // is still in flight, ``runners.length === 0`` is not the same as
+    // "name doesn't exist". Hold the issue until we have ground truth.
+    const runnersReady = !runnersQuery.isLoading && runners.length > 0
+    const aggregatorsReady = !aggregatorsQuery.isLoading && aggregators.length > 0
+
+    if (runnerName && runnersReady && !selectedRunner) {
+      issues.push({
+        severity: 'error',
+        field: 'runner_name',
+        message: `Runner "${runnerName}" is not registered`,
+        i18n_key: 'parallelEnsemble.errors.runnerNotRegistered',
       })
-      for (const alias of offenders) {
-        issues.push({
-          severity: 'error',
-          field: 'model_aliases',
-          message: `Model "${alias}" lacks the runner's required capabilities`,
-          i18n_key: 'parallelEnsemble.errors.modelMissingCapability',
-        })
-      }
+    }
+    if (aggregatorName && aggregatorsReady && !selectedAggregator) {
+      issues.push({
+        severity: 'error',
+        field: 'aggregator_name',
+        message: `Aggregator "${aggregatorName}" is not registered`,
+        i18n_key: 'parallelEnsemble.errors.aggregatorNotRegistered',
+      })
     }
     if (
-      selectedAggregator
+      selectedRunner
+      && selectedAggregator
       && selectedAggregator.scope !== selectedRunner.aggregator_scope
     ) {
       issues.push({
@@ -113,36 +116,134 @@ const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
       })
     }
     return issues
-  }, [aliases, models, selectedAggregator, selectedRunner])
+  }, [
+    aggregatorName,
+    aggregators.length,
+    aggregatorsQuery.isLoading,
+    runnerName,
+    runners.length,
+    runnersQuery.isLoading,
+    selectedAggregator,
+    selectedRunner,
+  ])
 
-  // ── Mutation handlers ───────────────────────────────────────────
+  const filterSpecVar = useCallback(
+    (varPayload: Var, valueSelector: ValueSelector) => {
+      // ADR-v3-16 — only an upstream ``token-model-source`` node's
+      // ``outputs.spec`` field is a valid source. The variable pool
+      // surfaces every node output as an ``object`` selector, so the
+      // type filter alone would let the user pick e.g.
+      // ``http_request.body`` and crash at run time inside
+      // ``ModelInvocationSpec.model_validate``. Pinning the selector
+      // tail to ``"spec"`` keeps the picker honest at edit time.
+      if (!SPEC_VAR_TYPES.includes(varPayload.type))
+        return false
+      const last = valueSelector[valueSelector.length - 1]
+      return last === 'spec'
+    },
+    [],
+  )
 
-  const handleQuestionVariableChange = useCallback(
-    (selector: ValueSelector) => {
+  const filterNumericVar = useCallback((varPayload: Var) => {
+    return NUMERIC_VAR_TYPES.includes(varPayload.type)
+  }, [])
+
+  // ── Token-source mutation handlers ──────────────────────────────
+
+  const nextDefaultSourceId = useCallback((refs: ReadonlyArray<TokenSourceRef>) => {
+    // Stable default naming: ``source_1``, ``source_2``, … — user is
+    // expected to rename, but the default must never collide with an
+    // existing entry because the backend rejects duplicate source_id.
+    const existing = new Set(refs.map(r => r.source_id))
+    let i = refs.length + 1
+    while (existing.has(`source_${i}`))
+      i += 1
+    return `source_${i}`
+  }, [])
+
+  const handleAddTokenSource = useCallback(() => {
+    const next = produce(inputs, (draft) => {
+      if (!draft.ensemble)
+        return
+      draft.ensemble.token_sources.push({
+        source_id: nextDefaultSourceId(draft.ensemble.token_sources),
+        spec_selector: [],
+        weight: 1,
+        top_k_override: null,
+        fallback_weight: null,
+        extra: {},
+      })
+    })
+    setInputs(next)
+  }, [inputs, setInputs, nextDefaultSourceId])
+
+  const handleRemoveTokenSource = useCallback((index: number) => {
+    const next = produce(inputs, (draft) => {
+      if (!draft.ensemble)
+        return
+      draft.ensemble.token_sources.splice(index, 1)
+    })
+    setInputs(next)
+  }, [inputs, setInputs])
+
+  const handleSourceIdChange = useCallback((index: number, value: string) => {
+    const next = produce(inputs, (draft) => {
+      const ref = draft.ensemble?.token_sources[index]
+      if (ref)
+        ref.source_id = value
+    })
+    setInputs(next)
+  }, [inputs, setInputs])
+
+  const handleSpecSelectorChange = useCallback(
+    (index: number, selector: ValueSelector) => {
       const next = produce(inputs, (draft) => {
-        if (!draft.ensemble)
-          return
-        draft.ensemble.question_variable = selector
+        const ref = draft.ensemble?.token_sources[index]
+        if (ref)
+          ref.spec_selector = selector
       })
       setInputs(next)
     },
     [inputs, setInputs],
   )
 
-  const handleModelAliasesChange = useCallback(
-    (aliasesNext: string[]) => {
+  const handleWeightChange = useCallback(
+    (index: number, value: number | ValueSelector) => {
       const next = produce(inputs, (draft) => {
-        if (!draft.ensemble)
-          return
-        // De-dupe; the backend rejects duplicates downstream but the UI
-        // layer also enforces it so the dropdown's selection state
-        // reflects the actual runtime list.
-        draft.ensemble.model_aliases = Array.from(new Set(aliasesNext))
+        const ref = draft.ensemble?.token_sources[index]
+        if (ref)
+          ref.weight = value
       })
       setInputs(next)
     },
     [inputs, setInputs],
   )
+
+  const handleTopKOverrideChange = useCallback(
+    (index: number, value: number | null) => {
+      const next = produce(inputs, (draft) => {
+        const ref = draft.ensemble?.token_sources[index]
+        if (ref)
+          ref.top_k_override = value
+      })
+      setInputs(next)
+    },
+    [inputs, setInputs],
+  )
+
+  const handleFallbackWeightChange = useCallback(
+    (index: number, value: number | null) => {
+      const next = produce(inputs, (draft) => {
+        const ref = draft.ensemble?.token_sources[index]
+        if (ref)
+          ref.fallback_weight = value
+      })
+      setInputs(next)
+    },
+    [inputs, setInputs],
+  )
+
+  // ── Runner / aggregator mutation handlers ───────────────────────
 
   const handleRunnerChange = useCallback(
     (runner: RunnerMeta) => {
@@ -229,19 +330,25 @@ const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
     readOnly,
     inputs,
     // Registry data
-    models,
     runners,
     aggregators,
     selectedRunner,
     selectedAggregator,
-    isLoadingModels: localModelsQuery.isLoading,
     isLoadingRunners: runnersQuery.isLoading,
     isLoadingAggregators: aggregatorsQuery.isLoading,
+    // Filters
+    filterSpecVar,
+    filterNumericVar,
     // Local validation surface
     validationIssues,
     // Handlers
-    handleQuestionVariableChange,
-    handleModelAliasesChange,
+    handleAddTokenSource,
+    handleRemoveTokenSource,
+    handleSourceIdChange,
+    handleSpecSelectorChange,
+    handleWeightChange,
+    handleTopKOverrideChange,
+    handleFallbackWeightChange,
     handleRunnerChange,
     handleAggregatorChange,
     handleRunnerConfigChange,

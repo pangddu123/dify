@@ -101,9 +101,34 @@ export type DiagnosticsConfig = {
 // reflects controls off ``ui_schema``.
 export type ConfigBlob = Record<string, unknown>
 
+// Mirrors backend ``TokenSourceRef`` (api/core/workflow/nodes/
+// parallel_ensemble/entities.py, ADR-v3-16). Each entry is one upstream
+// ``token-model-source`` node contributing to the joint-vote loop:
+// ``spec_selector`` points at that source's ``outputs.spec`` field, and
+// the parallel-ensemble node resolves it against the variable pool at
+// run time to recover a ``ModelInvocationSpec`` (alias + prompt +
+// sampling_params). Prompt rendering and alias selection live upstream
+// — this layer only carries weight + the one sampling knob (``top_k``)
+// the joint-vote algorithm needs aligned across voters.
+//
+// ``weight`` mirrors ``AggregationInputRef.weight`` (static finite
+// number OR ``VariableSelector``-shaped ``list[str]``); ``fallback_weight``
+// only takes effect on the dynamic branch (ADR-v3-15).
+export type TokenSourceRef = {
+  source_id: string
+  spec_selector: ValueSelector
+  weight: number | ValueSelector
+  // ADR-v3-6: optional per-source override for the spec's ``top_k``.
+  // ``null`` keeps the upstream spec's ``sampling_params.top_k``.
+  top_k_override: number | null
+  // ``null`` (default) = fail-fast on dynamic-weight resolution failure.
+  // Setting a number opts into graceful-degrade mode (ADR-v3-15).
+  fallback_weight: number | null
+  extra: Record<string, unknown>
+}
+
 export type ParallelEnsembleConfig = {
-  question_variable: ValueSelector
-  model_aliases: string[]
+  token_sources: TokenSourceRef[]
   runner_name: string
   runner_config: ConfigBlob
   aggregator_name: string
@@ -115,13 +140,16 @@ export type ParallelEnsembleNodeType = CommonNodeType & {
   ensemble: ParallelEnsembleConfig
 }
 
-// Runner / aggregator names shipped in v0.2 (P2.5, P2.6, P2.6.5).
-// Defaults pin to ``response_level + majority_vote`` because that is
-// the migration target for users coming from the P1 ensemble-aggregator
-// node — it requires no llama.cpp-specific TOKEN_STEP capabilities and
-// every backend in the fork supports it out of the box.
-export const DEFAULT_RUNNER_NAME = 'response_level'
-export const DEFAULT_AGGREGATOR_NAME = 'majority_vote'
+// After ADR-v3-16 the parallel-ensemble node is token-mode-only:
+// ``response_level`` runner + ``majority_vote`` / ``concat`` aggregators
+// were lifted out (response-level ensembling now lives on the
+// ensemble-aggregator node). Backend currently only registers
+// ``token_step`` + the token-scope aggregators (``sum_score``,
+// ``max_score``); a fresh node must default to that pair so saving an
+// untouched node never produces a DSL the §9 startup pipeline rejects
+// at run time.
+export const DEFAULT_RUNNER_NAME = 'token_step'
+export const DEFAULT_AGGREGATOR_NAME = 'sum_score'
 
 export const DEFAULT_DIAGNOSTICS: DiagnosticsConfig = {
   include_model_outputs: false,

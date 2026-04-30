@@ -2,6 +2,7 @@ import type { NodeDefault } from '../../types'
 import type {
   DiagnosticsConfig,
   ParallelEnsembleNodeType,
+  TokenSourceRef,
 } from './types'
 import { BlockClassificationEnum } from '@/app/components/workflow/block-selector/types'
 import { BlockEnum } from '@/app/components/workflow/types'
@@ -30,16 +31,23 @@ const ALLOWED_STORAGE_VALUES: ReadonlyArray<DiagnosticsConfig['storage']> = [
   'metadata',
 ]
 
+const isFiniteNumber = (v: unknown): v is number =>
+  typeof v === 'number' && Number.isFinite(v) && typeof v !== 'boolean'
+
+const isSelectorTuple = (v: unknown): v is string[] =>
+  Array.isArray(v)
+  && v.length >= 2
+  && v.every(seg => typeof seg === 'string' && seg.trim().length > 0)
+
 const nodeDefault: NodeDefault<ParallelEnsembleNodeType> = {
   metaData,
   defaultValue: {
     ensemble: {
-      // ``question_variable`` must be a ≥ 2-segment selector; an empty
-      // array signals "user hasn't picked yet" so the field renders
-      // empty rather than guessing at e.g. ``["start", "user_input"]``
-      // which would silently bind to whatever variable lives there.
-      question_variable: [],
-      model_aliases: [],
+      // Empty list signals "user hasn't added any source yet". Backend
+      // ``ParallelEnsembleConfig.token_sources`` enforces ``min_length=1``;
+      // ``checkValid`` below mirrors that bound so an unconfigured node
+      // never saves silently.
+      token_sources: [],
       runner_name: DEFAULT_RUNNER_NAME,
       runner_config: {},
       aggregator_name: DEFAULT_AGGREGATOR_NAME,
@@ -66,8 +74,7 @@ const nodeDefault: NodeDefault<ParallelEnsembleNodeType> = {
     }
 
     const {
-      question_variable,
-      model_aliases,
+      token_sources,
       runner_name,
       runner_config,
       aggregator_name,
@@ -75,62 +82,109 @@ const nodeDefault: NodeDefault<ParallelEnsembleNodeType> = {
       diagnostics,
     } = ensemble
 
-    // ── question_variable: ≥ 2 segments (mirrors entities.py) ───────
-    if (!Array.isArray(question_variable) || question_variable.length < 2) {
-      errorMessages = t('errorMsg.fieldRequired', {
-        ns: 'workflow',
-        field: t(`${i18nPrefix}.questionVariable`, { ns: 'workflow' }),
-      })
-    }
-
-    // ── model_aliases: floor + uniqueness + per-runner minimum ───────
-    // Backend ``ParallelEnsembleConfig.model_aliases`` enforces
-    // ``min_length=1``; the v0.2 built-in runners ``response_level``
-    // and ``token_step`` both raise in ``validate_selection`` when
-    // ``len(model_aliases) < 2``. We mirror that minimum here for the
-    // built-ins so a saved DSL never gets past the panel only to fail
-    // at run time. Third-party / unknown runners keep the looser ≥ 1
-    // bound — a hypothetical ``judge`` runner with one contestant +
-    // a separate ``judge_alias`` field is legitimate at length 1, and
-    // its own ``validate_selection`` is the right place for the
-    // runner-specific rule.
+    // ── token_sources: floor + per-source shape + uniqueness ────────
+    // Backend ``ParallelEnsembleConfig.token_sources`` enforces
+    // ``min_length=1``; the v0.3 ``token_step`` runner additionally
+    // requires ≥ 2 voters in ``validate_selection``. Mirror both bounds
+    // so a saved DSL never gets past the panel only to fail at run time.
     const BUILT_IN_RUNNERS_REQUIRING_TWO: ReadonlySet<string> = new Set([
-      'response_level',
       'token_step',
     ])
-    const minAliases = BUILT_IN_RUNNERS_REQUIRING_TWO.has(runner_name) ? 2 : 1
-    if (!errorMessages) {
-      if (!Array.isArray(model_aliases) || model_aliases.length < minAliases) {
-        if (minAliases === 2) {
-          errorMessages = t(`${i18nPrefix}.errorMsg.runnerNeedsTwoAliases`, {
-            ns: 'workflow',
-            runner: runner_name,
-          })
-        }
-        else {
-          errorMessages = t('errorMsg.fieldRequired', {
-            ns: 'workflow',
-            field: t(`${i18nPrefix}.models`, { ns: 'workflow' }),
-          })
-        }
+    const minSources = BUILT_IN_RUNNERS_REQUIRING_TWO.has(runner_name) ? 2 : 1
+    if (!Array.isArray(token_sources) || token_sources.length < minSources) {
+      if (minSources === 2) {
+        errorMessages = t(`${i18nPrefix}.errorMsg.runnerNeedsTwoSources`, {
+          ns: 'workflow',
+          runner: runner_name,
+        })
       }
       else {
-        const seen = new Set<string>()
-        for (const alias of model_aliases) {
-          if (typeof alias !== 'string' || alias.length === 0) {
-            errorMessages = t(`${i18nPrefix}.errorMsg.modelAliasMustBeString`, {
+        errorMessages = t('errorMsg.fieldRequired', {
+          ns: 'workflow',
+          field: t(`${i18nPrefix}.tokenSources.title`, { ns: 'workflow' }),
+        })
+      }
+    }
+    else {
+      const seen = new Set<string>()
+      for (let i = 0; i < token_sources.length; i++) {
+        const ref = token_sources[i] as TokenSourceRef | undefined
+        if (!ref || typeof ref !== 'object') {
+          errorMessages = t(`${i18nPrefix}.errorMsg.tokenSourceMalformed`, {
+            ns: 'workflow',
+            index: i + 1,
+          })
+          break
+        }
+        const sid = typeof ref.source_id === 'string' ? ref.source_id.trim() : ''
+        if (!sid) {
+          errorMessages = t(`${i18nPrefix}.errorMsg.sourceIdRequired`, {
+            ns: 'workflow',
+            index: i + 1,
+          })
+          break
+        }
+        if (seen.has(sid)) {
+          errorMessages = t(`${i18nPrefix}.errorMsg.duplicateSourceId`, {
+            ns: 'workflow',
+            sourceId: sid,
+          })
+          break
+        }
+        seen.add(sid)
+
+        if (!isSelectorTuple(ref.spec_selector)) {
+          errorMessages = t(`${i18nPrefix}.errorMsg.specSelectorRequired`, {
+            ns: 'workflow',
+            sourceId: sid,
+          })
+          break
+        }
+
+        // weight: finite > 0, OR a ≥ 2-segment selector tuple. Mirrors
+        // backend ``TokenSourceRef._weight_well_formed``.
+        const w = ref.weight
+        if (Array.isArray(w)) {
+          if (!isSelectorTuple(w)) {
+            errorMessages = t(`${i18nPrefix}.errorMsg.weightSelectorMalformed`, {
               ns: 'workflow',
+              sourceId: sid,
             })
             break
           }
-          if (seen.has(alias)) {
-            errorMessages = t(`${i18nPrefix}.errorMsg.duplicateModelAlias`, {
+        }
+        else if (typeof w === 'boolean' || !isFiniteNumber(w) || w <= 0) {
+          errorMessages = t(`${i18nPrefix}.errorMsg.weightMustBePositive`, {
+            ns: 'workflow',
+            sourceId: sid,
+          })
+          break
+        }
+
+        // top_k_override: ``null`` (inherit upstream) or a positive
+        // integer. The runner caps top_k server-side; this is the
+        // shape-only guard.
+        const tk = ref.top_k_override
+        if (tk !== null && tk !== undefined) {
+          if (typeof tk === 'boolean' || !Number.isInteger(tk) || (tk as number) <= 0) {
+            errorMessages = t(`${i18nPrefix}.errorMsg.topKOverrideInvalid`, {
               ns: 'workflow',
-              alias,
+              sourceId: sid,
             })
             break
           }
-          seen.add(alias)
+        }
+
+        // fallback_weight: ``null`` (fail-fast) or a finite > 0 number.
+        const fw = ref.fallback_weight
+        if (fw !== null && fw !== undefined) {
+          if (typeof fw === 'boolean' || !isFiniteNumber(fw) || fw <= 0) {
+            errorMessages = t(`${i18nPrefix}.errorMsg.fallbackWeightInvalid`, {
+              ns: 'workflow',
+              sourceId: sid,
+            })
+            break
+          }
         }
       }
     }

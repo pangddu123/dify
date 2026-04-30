@@ -2,6 +2,7 @@ import type {
   AggregatorMeta,
   ParallelEnsembleNodeType,
   RunnerMeta,
+  TokenSourceRef,
   ValidationIssue,
 } from '../types'
 import type { NodePanelProps } from '@/app/components/workflow/types'
@@ -10,11 +11,7 @@ import * as React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BlockEnum } from '@/app/components/workflow/types'
 import Panel from '../panel'
-import {
-  DEFAULT_AGGREGATOR_NAME,
-  DEFAULT_DIAGNOSTICS,
-  DEFAULT_RUNNER_NAME,
-} from '../types'
+import { DEFAULT_DIAGNOSTICS } from '../types'
 
 // ── Hoisted mocks ───────────────────────────────────────────────────
 //
@@ -28,46 +25,45 @@ vi.mock('../use-config', () => ({
   default: (...args: unknown[]) => mockUseConfig(...args),
 }))
 
-// VarReferencePicker: emit a value through the panel's selector
-// callback. The Panel's filter only surfaces array values (rejecting
-// constants), so the stub returns an array.
-vi.mock('@/app/components/workflow/nodes/_base/components/variable/var-reference-picker', () => ({
-  __esModule: true,
-  default: ({ onChange }: { onChange: (value: unknown) => void }) => (
-    <button
-      type="button"
-      data-testid="var-picker"
-      onClick={() => onChange(['start', 'question'])}
-    >
-      pick-question
-    </button>
-  ),
-}))
-
-// All four child surfaces are tested independently — keep them as
-// simple stubs that surface the props the panel passes them so we can
-// assert routing (which child receives which configuration slice).
 type SelectorMockProps = {
-  selected?: ReadonlyArray<string>
   selectedName?: string
-  requiredCapabilities?: ReadonlyArray<string>
   requiredScope?: string
-  models?: ReadonlyArray<{ id: string }>
   runners?: ReadonlyArray<{ name: string }>
   aggregators?: ReadonlyArray<{ name: string }>
   onChange: (next: unknown) => void
 }
 
-vi.mock('../components/model-selector', () => ({
+vi.mock('../components/token-source-list', () => ({
   __esModule: true,
-  default: ({ selected, requiredCapabilities, models, onChange }: SelectorMockProps) => (
-    <div data-testid="model-selector">
-      <span data-testid="model-selector-required">{requiredCapabilities?.join(',')}</span>
-      <span data-testid="model-selector-selected">{selected?.join(',')}</span>
-      <span data-testid="model-selector-count">{models?.length}</span>
-      <button type="button" onClick={() => onChange(['llama3-local', 'qwen-local'])}>
-        change-models
-      </button>
+  default: ({
+    list,
+    onAdd,
+    onSourceIdChange,
+    onSpecSelectorChange,
+    onWeightChange,
+    onTopKOverrideChange,
+    onFallbackWeightChange,
+  }: {
+    list: TokenSourceRef[]
+    onAdd: () => void
+    onRemove: (i: number) => void
+    onSourceIdChange: (i: number, v: string) => void
+    onSpecSelectorChange: (i: number, sel: string[]) => void
+    onWeightChange: (i: number, v: number | string[]) => void
+    onTopKOverrideChange: (i: number, v: number | null) => void
+    onFallbackWeightChange: (i: number, v: number | null) => void
+  }) => (
+    <div data-testid="token-source-list">
+      <span data-testid="token-source-list-count">{list.length}</span>
+      <span data-testid="token-source-list-ids">
+        {list.map(r => r.source_id).join(',')}
+      </span>
+      <button type="button" onClick={onAdd}>add-source</button>
+      <button type="button" onClick={() => onSourceIdChange(0, 'renamed')}>rename-source</button>
+      <button type="button" onClick={() => onSpecSelectorChange(0, ['source_node', 'spec'])}>pick-spec</button>
+      <button type="button" onClick={() => onWeightChange(0, 2.5)}>set-weight</button>
+      <button type="button" onClick={() => onTopKOverrideChange(0, 8)}>set-top-k</button>
+      <button type="button" onClick={() => onFallbackWeightChange(0, 0.5)}>set-fallback</button>
     </div>
   ),
 }))
@@ -106,10 +102,10 @@ vi.mock('../components/aggregator-selector', () => ({
       <button
         type="button"
         onClick={() => onChange({
-          name: 'self_consistency',
-          scope: 'response',
+          name: 'sum_score',
+          scope: 'token',
           ui_schema: {},
-          i18n_key_prefix: 'parallelEnsemble.aggregators.selfConsistency',
+          i18n_key_prefix: 'parallelEnsemble.aggregators.sumScore',
           config_schema: {},
         })}
       >
@@ -146,22 +142,6 @@ vi.mock('../components/diagnostics-config', () => ({
   ),
 }))
 
-vi.mock('../components/import-model-info-button', () => ({
-  __esModule: true,
-  default: ({ isLoading, knownAliases, onImport }: { isLoading?: boolean, knownAliases: ReadonlyArray<string>, onImport: (a: string[]) => void }) => (
-    <button
-      type="button"
-      data-testid="import-button"
-      data-known={knownAliases.join(',')}
-      data-loading={isLoading ? 'true' : 'false'}
-      disabled={isLoading}
-      onClick={() => onImport(['imported-model'])}
-    >
-      import
-    </button>
-  ),
-}))
-
 // Output-vars wrapper renders children — surface them in a div so
 // assertions can verify the `trace` slot's conditional inclusion.
 vi.mock('@/app/components/workflow/nodes/_base/components/output-vars', () => ({
@@ -176,28 +156,33 @@ vi.mock('@/app/components/workflow/nodes/_base/components/output-vars', () => ({
 
 // ── Builders ────────────────────────────────────────────────────────
 
-const buildModels = () => [
-  { id: 'llama3-local', backend: 'llama_cpp', model_name: 'llama3-8b', capabilities: ['response_level', 'token_step'], metadata: {} },
-  { id: 'qwen-local', backend: 'llama_cpp', model_name: 'qwen2-7b', capabilities: ['response_level', 'token_step'], metadata: {} },
-]
+const buildSource = (overrides: Partial<TokenSourceRef> = {}): TokenSourceRef => ({
+  source_id: 'source_1',
+  spec_selector: ['model_a', 'spec'],
+  weight: 1,
+  top_k_override: null,
+  fallback_weight: null,
+  extra: {},
+  ...overrides,
+})
 
 const buildRunner = (overrides: Partial<RunnerMeta> = {}): RunnerMeta => ({
-  name: 'response_level',
-  i18n_key_prefix: 'parallelEnsemble.runners.responseLevel',
+  name: 'token_step',
+  i18n_key_prefix: 'parallelEnsemble.runners.tokenStep',
   ui_schema: {},
   config_schema: {},
-  aggregator_scope: 'response',
-  required_capabilities: [],
+  aggregator_scope: 'token',
+  required_capabilities: ['token_step'],
   optional_capabilities: [],
   ...overrides,
 })
 
 const buildAggregator = (overrides: Partial<AggregatorMeta> = {}): AggregatorMeta => ({
-  name: 'majority_vote',
-  i18n_key_prefix: 'parallelEnsemble.aggregators.majorityVote',
+  name: 'sum_score',
+  i18n_key_prefix: 'parallelEnsemble.aggregators.sumScore',
   ui_schema: {},
   config_schema: {},
-  scope: 'response',
+  scope: 'token',
   ...overrides,
 })
 
@@ -206,11 +191,14 @@ const buildPayload = (overrides: Partial<ParallelEnsembleNodeType> = {}): Parall
   desc: '',
   type: BlockEnum.ParallelEnsemble,
   ensemble: {
-    question_variable: ['start', 'question'],
-    model_aliases: ['llama3-local'],
-    runner_name: DEFAULT_RUNNER_NAME,
+    token_sources: [buildSource()],
+    // Pin to ``token_step`` + ``sum_score`` so the fixture aligns with
+    // the runner / aggregator builders below — the v3 default
+    // (``response_level`` / ``majority_vote``) wouldn't resolve against
+    // the test registry.
+    runner_name: 'token_step',
     runner_config: {},
-    aggregator_name: DEFAULT_AGGREGATOR_NAME,
+    aggregator_name: 'sum_score',
     aggregator_config: {},
     diagnostics: { ...DEFAULT_DIAGNOSTICS },
   },
@@ -220,17 +208,22 @@ const buildPayload = (overrides: Partial<ParallelEnsembleNodeType> = {}): Parall
 type ConfigResult = {
   readOnly: boolean
   inputs: ParallelEnsembleNodeType
-  models: ReadonlyArray<ReturnType<typeof buildModels>[number]>
   runners: ReadonlyArray<RunnerMeta>
   aggregators: ReadonlyArray<AggregatorMeta>
   selectedRunner?: RunnerMeta
   selectedAggregator?: AggregatorMeta
-  isLoadingModels: boolean
   isLoadingRunners: boolean
   isLoadingAggregators: boolean
+  filterSpecVar: () => boolean
+  filterNumericVar: () => boolean
   validationIssues: ValidationIssue[]
-  handleQuestionVariableChange: ReturnType<typeof vi.fn>
-  handleModelAliasesChange: ReturnType<typeof vi.fn>
+  handleAddTokenSource: ReturnType<typeof vi.fn>
+  handleRemoveTokenSource: ReturnType<typeof vi.fn>
+  handleSourceIdChange: ReturnType<typeof vi.fn>
+  handleSpecSelectorChange: ReturnType<typeof vi.fn>
+  handleWeightChange: ReturnType<typeof vi.fn>
+  handleTopKOverrideChange: ReturnType<typeof vi.fn>
+  handleFallbackWeightChange: ReturnType<typeof vi.fn>
   handleRunnerChange: ReturnType<typeof vi.fn>
   handleAggregatorChange: ReturnType<typeof vi.fn>
   handleRunnerConfigChange: ReturnType<typeof vi.fn>
@@ -243,36 +236,40 @@ const buildConfig = (overrides: Partial<ConfigResult> = {}): ConfigResult => {
   const runners = overrides.runners ?? [
     buildRunner(),
     buildRunner({
-      name: 'token_step',
-      i18n_key_prefix: 'parallelEnsemble.runners.tokenStep',
+      name: 'token_step_alt',
+      i18n_key_prefix: 'parallelEnsemble.runners.tokenStepAlt',
       aggregator_scope: 'token',
-      required_capabilities: ['token_step'],
       ui_schema: { top_k: { control: 'number_input', min: 1 } },
     }),
   ]
   const aggregators = overrides.aggregators ?? [
     buildAggregator(),
     buildAggregator({
-      name: 'self_consistency',
-      i18n_key_prefix: 'parallelEnsemble.aggregators.selfConsistency',
-      scope: 'response',
-      ui_schema: { temperature: { control: 'number_input' } },
+      name: 'max_score',
+      i18n_key_prefix: 'parallelEnsemble.aggregators.maxScore',
+      scope: 'token',
+      ui_schema: { use_weights: { control: 'switch' } },
     }),
   ]
   return {
     readOnly: false,
     inputs,
-    models: overrides.models ?? buildModels(),
     runners,
     aggregators,
     selectedRunner: overrides.selectedRunner ?? runners.find(r => r.name === inputs.ensemble?.runner_name),
     selectedAggregator: overrides.selectedAggregator ?? aggregators.find(a => a.name === inputs.ensemble?.aggregator_name),
-    isLoadingModels: overrides.isLoadingModels ?? false,
     isLoadingRunners: overrides.isLoadingRunners ?? false,
     isLoadingAggregators: overrides.isLoadingAggregators ?? false,
+    filterSpecVar: overrides.filterSpecVar ?? (() => true),
+    filterNumericVar: overrides.filterNumericVar ?? (() => true),
     validationIssues: overrides.validationIssues ?? [],
-    handleQuestionVariableChange: overrides.handleQuestionVariableChange ?? vi.fn(),
-    handleModelAliasesChange: overrides.handleModelAliasesChange ?? vi.fn(),
+    handleAddTokenSource: overrides.handleAddTokenSource ?? vi.fn(),
+    handleRemoveTokenSource: overrides.handleRemoveTokenSource ?? vi.fn(),
+    handleSourceIdChange: overrides.handleSourceIdChange ?? vi.fn(),
+    handleSpecSelectorChange: overrides.handleSpecSelectorChange ?? vi.fn(),
+    handleWeightChange: overrides.handleWeightChange ?? vi.fn(),
+    handleTopKOverrideChange: overrides.handleTopKOverrideChange ?? vi.fn(),
+    handleFallbackWeightChange: overrides.handleFallbackWeightChange ?? vi.fn(),
     handleRunnerChange: overrides.handleRunnerChange ?? vi.fn(),
     handleAggregatorChange: overrides.handleAggregatorChange ?? vi.fn(),
     handleRunnerConfigChange: overrides.handleRunnerConfigChange ?? vi.fn(),
@@ -295,19 +292,17 @@ describe('parallel-ensemble/panel', () => {
   })
 
   describe('Rendering — three-axis composition', () => {
-    // The panel's job is to compose the three SPI axes (model / runner
-    // / aggregator) plus the diagnostics + question + output sections.
-    // Each child must surface — missing sections silently break the
-    // user flow without raising.
+    // The panel's job is to compose the three SPI axes (sources / runner
+    // / aggregator) plus the diagnostics + output sections. Each child
+    // must surface — missing sections silently break the user flow
+    // without raising.
     it('renders all configuration sections for a populated payload', () => {
       mockUseConfig.mockReturnValue(buildConfig())
       renderPanel()
 
-      expect(screen.getByTestId('var-picker')).toBeInTheDocument()
-      expect(screen.getByTestId('model-selector')).toBeInTheDocument()
+      expect(screen.getByTestId('token-source-list')).toBeInTheDocument()
       expect(screen.getByTestId('runner-selector')).toBeInTheDocument()
       expect(screen.getByTestId('aggregator-selector')).toBeInTheDocument()
-      expect(screen.getByTestId('import-button')).toBeInTheDocument()
       expect(screen.getByTestId('output-vars')).toBeInTheDocument()
 
       // The diagnostics section uses ``supportFold``, so it ships
@@ -317,56 +312,33 @@ describe('parallel-ensemble/panel', () => {
       expect(screen.getByTestId('diagnostics-config')).toBeInTheDocument()
     })
 
-    it('passes the selected runner capabilities and the current model selection to ModelSelector', () => {
-      mockUseConfig.mockReturnValue(buildConfig({
-        inputs: buildPayload({
-          ensemble: {
-            question_variable: ['start', 'q'],
-            model_aliases: ['llama3-local'],
-            runner_name: 'token_step',
-            runner_config: {},
-            aggregator_name: '',
-            aggregator_config: {},
-            diagnostics: { ...DEFAULT_DIAGNOSTICS },
-          },
-        }),
-      }))
-      renderPanel()
-
-      expect(screen.getByTestId('model-selector-required')).toHaveTextContent('token_step')
-      expect(screen.getByTestId('model-selector-selected')).toHaveTextContent('llama3-local')
-      expect(screen.getByTestId('model-selector-count')).toHaveTextContent('2')
-    })
-
     it('forwards the active aggregator scope from the runner descriptor', () => {
-      mockUseConfig.mockReturnValue(buildConfig({
-        inputs: buildPayload({
-          ensemble: {
-            question_variable: ['start', 'q'],
-            model_aliases: ['llama3-local'],
-            runner_name: 'token_step',
-            runner_config: {},
-            aggregator_name: '',
-            aggregator_config: {},
-            diagnostics: { ...DEFAULT_DIAGNOSTICS },
-          },
-        }),
-      }))
+      mockUseConfig.mockReturnValue(buildConfig())
       renderPanel()
 
       expect(screen.getByTestId('aggregator-selector-scope')).toHaveTextContent('token')
     })
 
-    // While the model registry is loading, ``knownAliases`` is empty;
-    // letting the user click "Import" would surface a misleading
-    // "noneMatched" toast for every imported id. The panel must wire
-    // the registry's loading flag through so the button stays disabled
-    // until the fetch resolves.
-    it('disables the import button while the model registry is loading', () => {
-      mockUseConfig.mockReturnValue(buildConfig({ isLoadingModels: true }))
+    it('renders one row per token source', () => {
+      mockUseConfig.mockReturnValue(buildConfig({
+        inputs: buildPayload({
+          ensemble: {
+            token_sources: [
+              buildSource({ source_id: 'a' }),
+              buildSource({ source_id: 'b' }),
+            ],
+            runner_name: 'token_step',
+            runner_config: {},
+            aggregator_name: 'sum_score',
+            aggregator_config: {},
+            diagnostics: { ...DEFAULT_DIAGNOSTICS },
+          },
+        }),
+      }))
       renderPanel()
 
-      expect(screen.getByTestId('import-button')).toBeDisabled()
+      expect(screen.getByTestId('token-source-list-count')).toHaveTextContent('2')
+      expect(screen.getByTestId('token-source-list-ids')).toHaveTextContent('a,b')
     })
   })
 
@@ -392,11 +364,10 @@ describe('parallel-ensemble/panel', () => {
       mockUseConfig.mockReturnValue(buildConfig({
         inputs: buildPayload({
           ensemble: {
-            question_variable: ['start', 'q'],
-            model_aliases: ['llama3-local'],
-            runner_name: DEFAULT_RUNNER_NAME,
+            token_sources: [buildSource()],
+            runner_name: 'token_step',
             runner_config: {},
-            aggregator_name: DEFAULT_AGGREGATOR_NAME,
+            aggregator_name: 'sum_score',
             aggregator_config: {},
             diagnostics: { ...DEFAULT_DIAGNOSTICS, storage: 'inline' },
           },
@@ -419,39 +390,23 @@ describe('parallel-ensemble/panel', () => {
   })
 
   describe('Dynamic config forms', () => {
-    // Runner config form only renders when the runner declares a
-    // non-empty ui_schema. ``response_level`` ships an empty schema so
-    // the section disappears for the default config.
     it('hides the runner_config form when the runner ui_schema is empty', () => {
       mockUseConfig.mockReturnValue(buildConfig())
       renderPanel()
       expect(
-        screen.queryByTestId('dynamic-config-form:parallelEnsemble.runners.responseLevel'),
+        screen.queryByTestId('dynamic-config-form:parallelEnsemble.runners.tokenStep'),
       ).not.toBeInTheDocument()
     })
 
     it('renders the runner_config form for a runner with a non-empty ui_schema', () => {
       const runners = [
         buildRunner({
-          name: 'token_step',
-          i18n_key_prefix: 'parallelEnsemble.runners.tokenStep',
-          aggregator_scope: 'token',
           ui_schema: { top_k: { control: 'number_input' } },
         }),
       ]
       mockUseConfig.mockReturnValue(buildConfig({
         runners,
-        inputs: buildPayload({
-          ensemble: {
-            question_variable: ['start', 'q'],
-            model_aliases: ['llama3-local'],
-            runner_name: 'token_step',
-            runner_config: {},
-            aggregator_name: '',
-            aggregator_config: {},
-            diagnostics: { ...DEFAULT_DIAGNOSTICS },
-          },
-        }),
+        inputs: buildPayload(),
       }))
       renderPanel()
       expect(
@@ -461,16 +416,34 @@ describe('parallel-ensemble/panel', () => {
   })
 
   describe('Routing — child callbacks fire the right handlers', () => {
-    it('forwards model alias mutations to handleModelAliasesChange', () => {
+    it('forwards add-source clicks to handleAddTokenSource', () => {
       const config = buildConfig()
       mockUseConfig.mockReturnValue(config)
       renderPanel()
 
-      fireEvent.click(screen.getByText('change-models'))
-      expect(config.handleModelAliasesChange).toHaveBeenCalledWith([
-        'llama3-local',
-        'qwen-local',
-      ])
+      fireEvent.click(screen.getByText('add-source'))
+      expect(config.handleAddTokenSource).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards source-level mutations to their handlers', () => {
+      const config = buildConfig()
+      mockUseConfig.mockReturnValue(config)
+      renderPanel()
+
+      fireEvent.click(screen.getByText('rename-source'))
+      expect(config.handleSourceIdChange).toHaveBeenCalledWith(0, 'renamed')
+
+      fireEvent.click(screen.getByText('pick-spec'))
+      expect(config.handleSpecSelectorChange).toHaveBeenCalledWith(0, ['source_node', 'spec'])
+
+      fireEvent.click(screen.getByText('set-weight'))
+      expect(config.handleWeightChange).toHaveBeenCalledWith(0, 2.5)
+
+      fireEvent.click(screen.getByText('set-top-k'))
+      expect(config.handleTopKOverrideChange).toHaveBeenCalledWith(0, 8)
+
+      fireEvent.click(screen.getByText('set-fallback'))
+      expect(config.handleFallbackWeightChange).toHaveBeenCalledWith(0, 0.5)
     })
 
     it('forwards runner switch to handleRunnerChange with the descriptor', () => {
@@ -504,30 +477,6 @@ describe('parallel-ensemble/panel', () => {
       fireEvent.click(screen.getByText(/diagnostics\.title/))
       fireEvent.click(screen.getByText('change-diagnostics'))
       expect(config.handleDiagnosticsChange).toHaveBeenCalledWith({ storage: 'inline' })
-    })
-
-    it('forwards question variable picks to handleQuestionVariableChange', () => {
-      const config = buildConfig()
-      mockUseConfig.mockReturnValue(config)
-      renderPanel()
-
-      fireEvent.click(screen.getByText('pick-question'))
-      expect(config.handleQuestionVariableChange).toHaveBeenCalledWith(['start', 'question'])
-    })
-
-    it('merges the imported aliases with the existing selection', () => {
-      // The panel's import handler concatenates ``existingAliases``
-      // with the file's payload before forwarding — never replaces.
-      // ``handleModelAliasesChange`` de-dupes downstream.
-      const config = buildConfig()
-      mockUseConfig.mockReturnValue(config)
-      renderPanel()
-
-      fireEvent.click(screen.getByTestId('import-button'))
-      expect(config.handleModelAliasesChange).toHaveBeenCalledWith([
-        'llama3-local',
-        'imported-model',
-      ])
     })
   })
 })

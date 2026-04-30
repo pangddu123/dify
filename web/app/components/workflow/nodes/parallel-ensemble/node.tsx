@@ -9,13 +9,13 @@ const i18nPrefix = 'nodes.parallelEnsemble'
 const Node: FC<NodeProps<ParallelEnsembleNodeType>> = ({ data }) => {
   const { t } = useTranslation()
   const ensemble = data.ensemble
-  const aliasCount = ensemble?.model_aliases?.length ?? 0
+  const sourceCount = ensemble?.token_sources?.length ?? 0
 
   // Match ensemble-aggregator's "hide if no inputs" behaviour: a fresh
   // node on the canvas surfaces only its title + icon; once the user
-  // configures aliases, the runner label + count chip appear so the
+  // wires upstream sources, the runner label + count chip appear so the
   // graph is glanceable without opening the panel.
-  if (aliasCount === 0)
+  if (sourceCount === 0)
     return null
 
   const runnerName = ensemble?.runner_name ?? ''
@@ -35,9 +35,9 @@ const Node: FC<NodeProps<ParallelEnsembleNodeType>> = ({ data }) => {
           })}
         </span>
         <span className="system-xs-regular text-text-tertiary">
-          {t(`${i18nPrefix}.modelCount`, {
+          {t(`${i18nPrefix}.sourceCount`, {
             ns: 'workflow',
-            count: aliasCount,
+            count: sourceCount,
           })}
         </span>
       </div>
