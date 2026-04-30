@@ -114,8 +114,8 @@ class EnsembleAggregatorNode(Node[EnsembleAggregatorNodeData]):
                 ``SourceAggregationContext.weights``.
             source_meta: ``source_id`` → ``ref.extra`` pass-through.
             weight_fallbacks: per-source fallback events (surfaced on
-                ``inputs`` so silent degrades are visible to single-step
-                debug — empty in the happy path).
+                ``process_data`` by ``_run`` so silent degrades are visible
+                to single-step debug — empty in the happy path).
 
         Failure modes (ADR-v3-15 fail-fast):
             * Missing upstream variable → ``MissingInputError``.

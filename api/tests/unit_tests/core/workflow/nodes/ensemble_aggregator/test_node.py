@@ -518,6 +518,126 @@ class TestDynamicWeightResolution:
         # m1 weight 2.0 + m2 weight 1.0; both 'A' → A:3.0
         assert nrr.outputs["metadata"]["weights"] == {"m1": 2.0, "m2": 1.0}
 
+    def test_dynamic_weight_none_value_fail_fast(self):
+        # Pool has the selector key, but the stored value is None — the
+        # pool returns a NoneSegment whose `.value` is None. The resolver
+        # must distinguish this from "selector not present" and report
+        # the dedicated reason string so debugging stays unambiguous.
+        pool = self._two_inputs_pool(with_weight_var=True, weight_value=None)
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.FAILED
+        assert nrr.error_type == "WeightResolutionError"
+        # Either reason can apply depending on how the pool stores None
+        # (some VariablePool impls treat None as "not present"); whichever
+        # branch fires, the failure must surface through the same exception.
+        assert (
+            "None" in nrr.error
+            or "not present" in nrr.error
+            or "not numeric" in nrr.error
+        )
+
+    def test_dynamic_weight_nan_value_fail_fast(self):
+        # NaN is technically a float; finiteness guard must reject it.
+        pool = self._two_inputs_pool(
+            with_weight_var=True, weight_value=float("nan")
+        )
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.FAILED
+        assert nrr.error_type == "WeightResolutionError"
+        assert "not finite" in nrr.error or "nan" in nrr.error.lower()
+
+    def test_dynamic_weight_inf_value_fail_fast(self):
+        pool = self._two_inputs_pool(
+            with_weight_var=True, weight_value=float("inf")
+        )
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.FAILED
+        assert nrr.error_type == "WeightResolutionError"
+        assert "not finite" in nrr.error or "inf" in nrr.error.lower()
+
+    def test_dynamic_weight_negative_inf_value_fail_fast(self):
+        pool = self._two_inputs_pool(
+            with_weight_var=True, weight_value=float("-inf")
+        )
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.FAILED
+        assert nrr.error_type == "WeightResolutionError"
+        assert "not finite" in nrr.error or "inf" in nrr.error.lower()
+
+    def test_fallback_recovers_non_numeric_pool_value(self):
+        # Different failure reason than the missing-var test above —
+        # this one resolves the selector but lands on a string. Fallback
+        # path must still capture the original reason in process_data.
+        pool = self._two_inputs_pool(with_weight_var=True, weight_value="three")
+        payload = self._payload(
+            weight_a=["weights_node", "m1"], fallback_a=0.25, weight_b=1.0
+        )
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
+        assert nrr.outputs["metadata"]["weights"] == {"m1": 0.25, "m2": 1.0}
+        warnings = nrr.process_data["weight_fallback_warnings"]
+        assert len(warnings) == 1
+        assert warnings[0]["source_id"] == "m1"
+        assert warnings[0]["fallback_weight"] == 0.25
+        assert "not numeric" in warnings[0]["reason"]
+
+    def test_multiple_fallbacks_recorded_in_declared_order(self):
+        # Two failing dynamic weights, both with fallbacks — the
+        # process_data list must hold one entry per source in declared
+        # order, so single-step debug shows them column-aligned with
+        # the inputs panel.
+        pool = VariablePool()
+        pool.add(["llm_a", "text"], "A")
+        pool.add(["llm_b", "text"], "A")
+        # Neither weight selector is present → both fall back.
+        payload = {
+            "title": "agg",
+            "inputs": [
+                {
+                    "source_id": "m1",
+                    "variable_selector": ["llm_a", "text"],
+                    "weight": ["weights_node", "m1"],
+                    "fallback_weight": 0.6,
+                },
+                {
+                    "source_id": "m2",
+                    "variable_selector": ["llm_b", "text"],
+                    "weight": ["weights_node", "m2"],
+                    "fallback_weight": 0.4,
+                },
+            ],
+            "strategy_name": "weighted_majority_vote",
+            "strategy_config": {},
+        }
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
+        warnings = nrr.process_data["weight_fallback_warnings"]
+        assert [w["source_id"] for w in warnings] == ["m1", "m2"]
+        assert [w["fallback_weight"] for w in warnings] == [0.6, 0.4]
+        assert nrr.outputs["metadata"]["weights"] == {"m1": 0.6, "m2": 0.4}
+
 
 class TestExtraSourceMeta:
     """``AggregationInputRef.extra`` flows through to ``SourceAggregationContext.source_meta``."""

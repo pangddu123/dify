@@ -268,6 +268,65 @@ class TestWeightedMajorityVoteStrategy:
         result = strategy.aggregate(signals, ctx, _WeightedMajorityVoteConfig())
         assert result["metadata"]["weights"] == {"s1": 0.7, "s2": 0.3}
 
+    def test_unit_weights_keep_weighted_metadata_shape(self):
+        """Regression: unlike majority_vote, the weighted variant must not
+        collapse `scores` to int counts even when weights are all 1.0 —
+        downstream consumers reading ``metadata.scores`` rely on the
+        float-shaped surface (ADR-v3-9 SPI extension example).
+        """
+        strategy = WeightedMajorityVoteStrategy()
+        signals = _signals(("s1", "A"), ("s2", "A"), ("s3", "B"))
+        result = strategy.aggregate(
+            signals, _ctx(["s1", "s2", "s3"]), _WeightedMajorityVoteConfig()
+        )
+        assert all(isinstance(v, float) for v in result["metadata"]["scores"].values())
+        assert isinstance(result["metadata"]["winner_score"], float)
+        # And the strategy literal stays explicit, never silently downgraded.
+        assert result["metadata"]["strategy"] == "weighted_majority_vote"
+
+    def test_dominant_single_voter_outweighs_unanimous_minority(self):
+        """One source with weight 10 beats four unanimous sources at weight 1."""
+        strategy = WeightedMajorityVoteStrategy()
+        signals = _signals(
+            ("s1", "minority"),
+            ("s2", "minority"),
+            ("s3", "minority"),
+            ("s4", "minority"),
+            ("oracle", "dominant"),
+        )
+        ctx = _ctx(
+            ["s1", "s2", "s3", "s4", "oracle"],
+            weights={
+                "s1": 1.0,
+                "s2": 1.0,
+                "s3": 1.0,
+                "s4": 1.0,
+                "oracle": 10.0,
+            },
+        )
+        result = strategy.aggregate(signals, ctx, _WeightedMajorityVoteConfig())
+        assert result["text"] == "dominant"
+        assert result["metadata"]["scores"] == {"minority": 4.0, "dominant": 10.0}
+        assert result["metadata"]["winner_score"] == 10.0
+        assert result["metadata"]["tie_break_applied"] is False
+
+    def test_aggregated_minority_overpowers_single_strong_voter(self):
+        """Multiple weighted votes for the same text must sum, beating a
+        single heavier voter once the cumulative weight exceeds it."""
+        strategy = WeightedMajorityVoteStrategy()
+        signals = _signals(
+            ("a", "T"), ("b", "T"), ("c", "T"), ("strong", "U")
+        )
+        ctx = _ctx(
+            ["a", "b", "c", "strong"],
+            weights={"a": 1.5, "b": 1.5, "c": 1.5, "strong": 4.0},
+        )
+        result = strategy.aggregate(signals, ctx, _WeightedMajorityVoteConfig())
+        # T = 1.5 * 3 = 4.5 vs U = 4.0
+        assert result["text"] == "T"
+        assert result["metadata"]["scores"]["T"] == pytest.approx(4.5)
+        assert result["metadata"]["scores"]["U"] == 4.0
+
 
 class TestSourceAggregationContextIsolation:
     """ADR-v3-8 / Rv3-9 regression: SourceAggregationContext exposes only
