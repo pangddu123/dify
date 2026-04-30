@@ -110,13 +110,14 @@ class NoopRunner(EnsembleRunner[NoopConfig]):
 
     def run(
         self,
-        question: str,
+        sources,
         backends: dict[str, ModelBackend],
         aggregator,
         config: NoopConfig,
         trace: TraceCollector,
     ) -> Iterator[RunnerEvent]:
-        yield DoneEvent(kind="done", text=question, metadata={"note": config.note})
+        del sources
+        yield DoneEvent(kind="done", text="", metadata={"note": config.note})
 
 
 # ── First aggregator ───────────────────────────────────────────────────
@@ -248,7 +249,7 @@ class TestRunnerRegistration:
                 def requirements(cls, config):
                     return []
 
-                def run(self, question, backends, aggregator, config, trace):
+                def run(self, sources, backends, aggregator, config, trace):
                     yield DoneEvent(kind="done", text="", metadata={})
 
 

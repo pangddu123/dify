@@ -24,13 +24,15 @@ from core.workflow.nodes.parallel_ensemble.runners.token_step import (
     TokenStepConfig,
     TokenStepRunner,
 )
+from core.workflow.nodes.parallel_ensemble.spi.backend import TokenStepParams
 from core.workflow.nodes.parallel_ensemble.spi.capability import Capability
+from core.workflow.nodes.parallel_ensemble.spi.runner import SourceInput
 from core.workflow.nodes.parallel_ensemble.spi.trace import (
     DiagnosticsConfig,
     TraceCollector,
 )
 
-from .conftest import FakeBackend
+from .conftest import FakeBackend, make_sources
 
 
 def test_registered_with_token_scope():
@@ -41,11 +43,19 @@ def test_registered_with_token_scope():
     assert cls.required_capabilities == frozenset({Capability.TOKEN_STEP, Capability.TOP_PROBS})
 
 
-def test_requirements_derive_from_top_k():
-    cfg = TokenStepConfig(top_k=7)
+def test_requirements_shape_only():
+    """ADR-v3-16: ``requirements()`` returns the *shape* (kinds), not
+    a per-source ``min_top_k`` value. The node substitutes the actual
+    cap from each source's effective ``TokenStepParams`` before calling
+    ``backend.validate_requirements`` (see node-level test
+    ``test_top_k_override_drives_per_source_requirement``)."""
+    cfg = TokenStepConfig()
     reqs = TokenStepRunner.requirements(cfg)
-    kinds = {r["kind"]: r["value"] for r in reqs}
-    assert kinds == {"min_top_k": 7, "needs_logprobs": True}
+    kinds = {r["kind"] for r in reqs}
+    assert kinds == {"min_top_k", "needs_logprobs"}
+    # ``min_top_k`` is a placeholder — the node overrides per source.
+    by_kind = {r["kind"]: r["value"] for r in reqs}
+    assert by_kind["needs_logprobs"] is True
 
 
 def test_token_step_runner_eos(executor, cand):
@@ -74,7 +84,7 @@ def test_token_step_runner_eos(executor, cand):
     trace = TraceCollector(DiagnosticsConfig())
     events = list(
         runner.run(
-            question="hi",
+            sources=make_sources(backends),
             backends=backends,
             aggregator=SumScoreAggregator(),
             config=TokenStepConfig(max_len=20, enable_think=False),
@@ -103,7 +113,7 @@ def test_token_step_runner_max_len(executor, cand):
     trace = TraceCollector(DiagnosticsConfig())
     events = list(
         runner.run(
-            question="hi",
+            sources=make_sources(backends),
             backends=backends,
             aggregator=SumScoreAggregator(),
             config=TokenStepConfig(max_len=4, enable_think=False),
@@ -138,17 +148,18 @@ def test_token_step_prompt_sync(executor, cand):
     )
     runner = TokenStepRunner(executor=executor, aggregator_config=SumScoreConfig(use_weights=False))
     trace = TraceCollector(DiagnosticsConfig())
+    backends = {"m1": m1, "m2": m2}
     list(
         runner.run(
-            question="hi",
-            backends={"m1": m1, "m2": m2},
+            sources=make_sources(backends),
+            backends=backends,
             aggregator=SumScoreAggregator(),
             config=TokenStepConfig(max_len=10, enable_think=False),
             trace=trace,
         )
     )
 
-    # Step 0 prompts must match (both fed templated initial prompt).
+    # Step 0 prompts must match (both fed identical starting prompt).
     assert m1.step_calls[0][0] == m2.step_calls[0][0]
     # Step 1 prompts: each backend's prompt should have gained "hello".
     p0_m1, _ = m1.step_calls[0]
@@ -226,7 +237,7 @@ def test_token_step_populates_backend_aggregation_context(executor, cand):
     trace = TraceCollector(DiagnosticsConfig())
     list(
         runner.run(
-            question="hi",
+            sources=make_sources(backends),
             backends=backends,
             aggregator=aggregator,
             config=TokenStepConfig(max_len=4, enable_think=False),
@@ -266,10 +277,11 @@ def test_token_step_handles_per_model_errors(executor, cand):
     runner = TokenStepRunner(executor=executor, aggregator_config=SumScoreConfig())
     diagnostics = DiagnosticsConfig(include_token_candidates=True, include_per_backend_errors=True)
     trace = TraceCollector(diagnostics)
+    backends = {"m1": m1, "m2": m2}
     events = list(
         runner.run(
-            question="hi",
-            backends={"m1": m1, "m2": m2},
+            sources=make_sources(backends),
+            backends=backends,
             aggregator=SumScoreAggregator(),
             config=TokenStepConfig(max_len=10, enable_think=False),
             trace=trace,
@@ -360,7 +372,7 @@ def test_run_rejects_response_aggregator(executor):
     with pytest.raises(TypeError, match="TokenAggregator"):
         list(
             runner.run(
-                question="hi",
+                sources=make_sources(backends),
                 backends=backends,
                 aggregator=_StubResponseAggregator(),  # wrong scope
                 config=TokenStepConfig(max_len=2, enable_think=False),
@@ -369,30 +381,50 @@ def test_run_rejects_response_aggregator(executor):
         )
 
 
-def test_chat_template_invoked_for_capable_backends(executor, cand):
-    """Backends that declare CHAT_TEMPLATE get ``apply_template`` called once."""
-    backend = FakeBackend(
-        "m1",
-        scripted_steps=[[cand("<end>", 1.0)]],
-        capabilities=frozenset({Capability.TOKEN_STEP, Capability.TOP_PROBS, Capability.CHAT_TEMPLATE}),
-    )
-    bare = FakeBackend("m2", scripted_steps=[[cand("<end>", 1.0)]])
+def test_per_source_sampling_passes_through_to_backend(executor, cand):
+    """ADR-v3-6 + P3.B.3: per-source ``TokenStepParams`` reach the backend
+    intact each step (top_k_override, temperature, seed, …). The runner
+    no longer constructs sampling params internally — whatever the node
+    handed in via ``SourceInput.params`` is what ``backend.step_token``
+    sees, including across sources sharing the same model alias.
+    """
+    m1 = FakeBackend("m1", scripted_steps=[[cand("a", 0.6)], [cand("<end>", 1.0)]])
+    m2 = FakeBackend("m2", scripted_steps=[[cand("a", 0.4)], [cand("<end>", 1.0)]])
+    backends = {"m1": m1, "m2": m2}
+    sources = {
+        "m1": SourceInput(
+            prompt="P1",
+            params=TokenStepParams(top_k=12, temperature=0.3, seed=42),
+            weight=1.0,
+        ),
+        "m2": SourceInput(
+            prompt="P2",
+            params=TokenStepParams(top_k=7, temperature=1.5),
+            weight=2.0,
+        ),
+    }
     runner = TokenStepRunner(executor=executor, aggregator_config=SumScoreConfig())
     trace = TraceCollector(DiagnosticsConfig())
     list(
         runner.run(
-            question="hi",
-            backends={"m1": backend, "m2": bare},
+            sources=sources,
+            backends=backends,
             aggregator=SumScoreAggregator(),
-            config=TokenStepConfig(enable_think=False),
+            config=TokenStepConfig(max_len=4, enable_think=False),
             trace=trace,
         )
     )
-    # m1 gets templated, m2 falls through with bare question.
-    assert len(backend.template_calls) == 1
-    assert backend.template_calls[0][1]["content"] == "hi"
-    assert bare.template_calls == []
-    assert bare.step_calls[0][0] == "hi"
+    # Step 0: each backend gets its own ``TokenStepParams`` instance.
+    assert m1.step_calls[0][0] == "P1"
+    assert m2.step_calls[0][0] == "P2"
+    assert m1.step_calls[0][1].top_k == 12
+    assert m1.step_calls[0][1].temperature == 0.3
+    assert m1.step_calls[0][1].seed == 42
+    assert m2.step_calls[0][1].top_k == 7
+    assert m2.step_calls[0][1].temperature == 1.5
+    # Step 1: same params instance reused (frozen, immutable).
+    assert m1.step_calls[1][1] is m1.step_calls[0][1]
+    assert m2.step_calls[1][1] is m2.step_calls[0][1]
 
 
 # ── Tiny in-test registry stand-in ────────────────────────────────────

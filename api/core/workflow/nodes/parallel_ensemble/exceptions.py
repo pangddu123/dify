@@ -51,6 +51,61 @@ class CapabilityNotSupportedError(ParallelEnsembleError):
 CapabilityNotSupported = CapabilityNotSupportedError
 
 
+class MissingSpecError(ParallelEnsembleError):
+    """Raised when a ``token_source.spec_selector`` does not resolve in the variable pool.
+
+    The upstream ``token-model-source`` node failed (or was never wired)
+    so no :class:`ModelInvocationSpec` is available for this source. The
+    node FAILs fast — there is no graceful-degrade because the joint
+    voting loop has no defined behaviour for a missing voter.
+    """
+
+    def __init__(self, source_id: str, spec_selector: list[str]):
+        self.source_id = source_id
+        self.spec_selector = spec_selector
+        super().__init__(
+            f"Upstream ModelInvocationSpec for source '{source_id}' "
+            f"(spec_selector={spec_selector}) is not present in the variable pool"
+        )
+
+
+class InvalidSpecError(ParallelEnsembleError):
+    """Raised when an upstream variable resolves but is not a valid ``ModelInvocationSpec``.
+
+    The variable pool returned a value but its shape does not match
+    :class:`~core.workflow.nodes.token_model_source.entities.ModelInvocationSpec`
+    (missing ``model_alias`` / ``prompt`` / ``sampling_params`` keys, or
+    wrong types). Surfaces as a §9 startup error so the panel can point
+    the user at the offending source instead of failing mid-loop.
+    """
+
+    def __init__(self, source_id: str, reason: str):
+        self.source_id = source_id
+        self.reason = reason
+        super().__init__(
+            f"Source '{source_id}' did not resolve to a valid ModelInvocationSpec: {reason}"
+        )
+
+
+class WeightResolutionError(ParallelEnsembleError):
+    """Raised when a dynamic ``TokenSourceRef.weight`` selector cannot resolve.
+
+    Mirrors ``ensemble_aggregator``'s same-named exception — the node
+    FAILs by default (ADR-v3-15 fail-fast); only when the user opts
+    into a numeric ``fallback_weight`` does the node trace-warn and use
+    the fallback instead.
+    """
+
+    def __init__(self, source_id: str, selector: list[str], reason: str):
+        self.source_id = source_id
+        self.selector = selector
+        self.reason = reason
+        super().__init__(
+            f"Failed to resolve weight for source '{source_id}' "
+            f"(selector={selector}): {reason}"
+        )
+
+
 class StructuredValidationError(ParallelEnsembleError):
     """Raised by the §9 validation pipeline when ``ValidationIssue``s reach severity=error.
 

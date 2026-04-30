@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal, TypedDict, TypeVar
 from pydantic import BaseModel
 
 from .aggregator import Aggregator
-from .backend import ModelBackend
+from .backend import ModelBackend, TokenStepParams
 from .capability import Capability
 from .requirements import Requirement, ValidationIssue
 from .trace import TraceCollector
@@ -91,6 +91,33 @@ class DoneEvent(TypedDict):
 
 
 RunnerEvent = TokenEvent | FullResponseEvent | DoneEvent
+
+
+class SourceInput(TypedDict):
+    """One source's per-call payload handed to ``EnsembleRunner.run`` (P3.B.3 / ADR-v3-16).
+
+    Replaces the old ``question: str`` argument: the upstream
+    ``token-model-source`` node renders the prompt, picks the model
+    alias, and bundles its sampling params; the parallel-ensemble node
+    merges in the ``TokenSourceRef.top_k_override`` and resolves the
+    per-source weight, then hands the runner one ``SourceInput`` per
+    source. Keying everything by ``source_id`` (not model_alias) is
+    what lets the same model appear twice — the canonical
+    self-consistency / temperature-sweep setup — without collisions in
+    trace / weights / per-model dicts.
+
+    Backends are also keyed by ``source_id`` to match.
+
+    Backend-private extras (e.g. vLLM ``repetition_penalty``,
+    llama.cpp ``mirostat``) ride on ``params.extra`` — they route
+    through sampling so the backend sees them on every
+    ``step_token(prompt, params)`` call without leaking into
+    aggregator metadata.
+    """
+
+    prompt: str
+    params: TokenStepParams
+    weight: float
 
 
 class EnsembleRunner[ConfigT: BaseModel](ABC):
@@ -172,14 +199,22 @@ class EnsembleRunner[ConfigT: BaseModel](ABC):
 
         Default: no extra rules (returns empty list). Runners with
         constraints like "judge_alias must be in model_aliases" or
-        "needs ≥2 models" override this.
+        "needs ≥2 sources" override this.
+
+        Post-ADR-v3-16: ``model_aliases`` carries one entry per
+        ``token_source`` (resolved from each source's
+        ``ModelInvocationSpec.model_alias``); duplicates are allowed
+        because the same model can legitimately appear twice with
+        different sampling. Runners that need to reason about distinct
+        models should de-dup themselves; runners that count voters
+        (``token_step``: ≥ 2) should use ``len(model_aliases)``.
         """
         return []
 
     @abstractmethod
     def run(
         self,
-        question: str,
+        sources: dict[str, SourceInput],
         backends: dict[str, ModelBackend],
         aggregator: Aggregator,
         config: ConfigT,
@@ -188,8 +223,13 @@ class EnsembleRunner[ConfigT: BaseModel](ABC):
         """Run the ensemble, yielding events the node translates into graphon stream events.
 
         Contracts:
-          - ``backends`` keys are aliases; values are already capability-
-            and requirements-validated.
+          - ``sources`` and ``backends`` share the same key set
+            (``source_id``); ``sources[sid]`` carries the pre-rendered
+            prompt + per-call ``TokenStepParams`` + resolved weight that
+            the upstream ``token-model-source`` node + this node's
+            config produced. Backends are already capability- and
+            requirements-validated against each source's effective
+            params.
           - Streaming runners interleave ``TokenEvent`` and end with
             exactly one ``DoneEvent``.
           - Non-streaming runners may yield only the ``DoneEvent``.

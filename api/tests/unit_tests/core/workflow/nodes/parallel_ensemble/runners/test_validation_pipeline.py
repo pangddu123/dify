@@ -62,6 +62,7 @@ from core.workflow.nodes.parallel_ensemble.spi.runner import (
     DoneEvent,
     EnsembleRunner,
     RunnerEvent,
+    SourceInput,
 )
 from core.workflow.nodes.parallel_ensemble.spi.trace import TraceCollector
 
@@ -182,7 +183,7 @@ def test_requirements_validation_returns_validation_issue_list():
     assert isinstance(issues, list)
     assert issues == []
 
-    runner_derived = TokenStepRunner.requirements(TokenStepConfig(top_k=20, max_len=10))
+    runner_derived = TokenStepRunner.requirements(TokenStepConfig(max_len=10))
     issues = LlamaCppBackend.validate_requirements(spec, runner_derived)
     assert isinstance(issues, list)
     assert all(isinstance(i, dict) and "severity" in i for i in issues)
@@ -240,13 +241,13 @@ class _JudgeRunner(EnsembleRunner[_JudgeConfig]):
 
     def run(
         self,
-        question: str,
+        sources: dict[str, SourceInput],
         backends: dict[str, ModelBackend],
         aggregator: Aggregator,
         config: _JudgeConfig,
         trace: TraceCollector,
     ) -> Iterator[RunnerEvent]:
-        del question, backends, aggregator, config, trace
+        del sources, backends, aggregator, config, trace
         yield DoneEvent(kind="done", text="", metadata={})
 
 

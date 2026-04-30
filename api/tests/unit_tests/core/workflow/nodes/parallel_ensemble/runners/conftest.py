@@ -1,8 +1,14 @@
-"""Shared fixtures for P2.6 runner tests.
+"""Shared fixtures for runner tests.
 
 Builds a fake :class:`ModelBackend` whose ``step_token`` / ``generate``
 return scripted candidate lists, so the test exercises the runner's
 fan-out + aggregation path without standing up an HTTP layer.
+
+Post-P3.B.3: the runner SPI takes a ``dict[source_id, SourceInput]``
+instead of a bare question string. The :func:`make_sources` helper
+builds the expected shape from a backends dict so existing tests can
+read a single line shorter than constructing ``SourceInput`` rows by
+hand.
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from core.workflow.nodes.parallel_ensemble.spi.backend import (
     TokenStepParams,
 )
 from core.workflow.nodes.parallel_ensemble.spi.capability import Capability
+from core.workflow.nodes.parallel_ensemble.spi.runner import SourceInput
 
 
 class _FakeSpec:
@@ -112,6 +119,28 @@ class FakeBackend(ModelBackend):
         self.template_calls.append([dict(m) for m in messages])
         # Minimal template: join role/content for determinism in tests.
         return "\n\n".join(f"{m['role']}: {m['content']}" for m in messages)
+
+
+def make_sources(
+    backends: dict[str, ModelBackend],
+    *,
+    prompt: str = "hi",
+    top_k: int = 5,
+) -> dict[str, SourceInput]:
+    """Build a ``dict[source_id, SourceInput]`` mirroring ``backends`` keys.
+
+    Used by tests that previously passed ``question="hi"`` — most tests
+    don't care about per-source sampling, so the helper hands every
+    source the same prompt + a default ``TokenStepParams(top_k=top_k)``.
+    """
+    return {
+        sid: SourceInput(
+            prompt=prompt,
+            params=TokenStepParams(top_k=top_k),
+            weight=backend.weight,
+        )
+        for sid, backend in backends.items()
+    }
 
 
 @pytest.fixture

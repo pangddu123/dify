@@ -1,13 +1,14 @@
-"""Pydantic schemas for the parallel-ensemble node DSL surface (P2.8).
+"""Pydantic schemas for the parallel-ensemble node DSL surface (P3.B.3).
 
 Two layers, on purpose:
 
-* :class:`ParallelEnsembleConfig` is the *business* config block. It owns
-  ``runner_name`` / ``runner_config`` / ``aggregator_name`` /
-  ``aggregator_config`` / ``diagnostics`` / ``question_variable`` /
-  ``model_aliases``. ``extra="forbid"`` so a DSL author cannot smuggle a
-  ``model_url`` / ``api_key`` through this layer — the SSRF / credential
-  boundary documented in EXTENSIBILITY_SPEC §4.4 (T1 / T2).
+* :class:`ParallelEnsembleConfig` is the *business* config block. After
+  ADR-v3-16 the node no longer owns prompt rendering or alias selection
+  — those moved upstream to the ``token-model-source`` node which yields
+  one :class:`~core.workflow.nodes.token_model_source.entities.ModelInvocationSpec`
+  per source. This config block carries N :class:`TokenSourceRef` plus
+  the runner / aggregator pairing; ``extra="forbid"`` so a DSL author
+  cannot smuggle a ``model_url`` / ``api_key`` through this layer.
 
 * :class:`ParallelEnsembleNodeData` is the *graph payload* layer that
   Dify hands the node from the saved workflow JSON. It inherits
@@ -27,9 +28,10 @@ factory has injected the registries.
 
 from __future__ import annotations
 
+import math
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from graphon.entities.base_node_data import BaseNodeData
 from graphon.enums import NodeType
@@ -40,12 +42,142 @@ from .spi.trace import DiagnosticsConfig
 # Sensitive keys the DSL must never carry on the parallel-ensemble node
 # data. URLs and credentials live in ``api/configs/model_net.yaml`` and
 # are reachable only via the registry; surfacing them in the DSL would
-# turn the node into an SSRF / credential-leak vector. These names are
-# deliberately the *exact* strings TASKS.md P2.8 calls out — the
-# rejection is a closed allowlist, not a regex match, so a third-party
-# extension can still carry e.g. ``"system_prompt"`` without tripping
-# this check.
+# turn the node into an SSRF / credential-leak vector. After ADR-v3-16
+# the alias list is gone too — backends are picked by the upstream
+# ``token-model-source`` node — so this list shrinks to the SSRF /
+# credential surface; a typo'd ``model_aliases`` will be caught earlier
+# by ``ParallelEnsembleConfig``'s ``extra="forbid"``.
 _FORBIDDEN_TOP_LEVEL_KEYS: frozenset[str] = frozenset({"model_url", "api_key", "api_key_env", "url", "endpoint"})
+
+
+class TokenSourceRef(BaseModel):
+    """One source contributing to the joint-vote token loop (ADR-v3-16).
+
+    ``spec_selector`` points at an upstream ``token-model-source`` node's
+    ``outputs.spec`` field — the variable pool will hand the runtime a
+    :class:`~core.workflow.nodes.token_model_source.entities.ModelInvocationSpec`
+    when ``_run`` resolves it. ``source_id`` identifies the source within
+    this node so the same model alias can appear twice (the canonical
+    "self-consistency at temperature=0.3 vs 1.0" setup) without
+    collisions in trace / weights / per-model dicts.
+
+    ``top_k_override`` is the only sampling knob this layer can override:
+    PN.py-style joint voting requires every voter to surface the same
+    number of candidates per step (``min(per-source top_k)`` would
+    otherwise truncate richer voters), so the user can re-pin top_k at
+    the *consumer* without editing the upstream source. Other sampling
+    knobs (temperature / top_p / stop / seed / max_tokens) ride on the
+    spec's ``sampling_params`` exactly as the source produced them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(..., min_length=1)
+    """Stable per-node identifier; surfaced in trace / weights /
+    per-model error dicts. Must be unique within a single
+    parallel-ensemble node."""
+
+    spec_selector: list[str] = Field(..., min_length=2)
+    """``VariableSelector`` form (``["<node_id>", "<field>"]``) pointing
+    at the upstream ``token-model-source`` node's ``outputs.spec``. Two
+    segments minimum — same shape Dify uses everywhere else."""
+
+    weight: float | list[str] = 1.0
+    """Static float (per-source weight) OR a ``VariableSelector``-shaped
+    ``list[str]`` (resolved at runtime against the variable pool, ADR-v3-15).
+    Default ``1.0`` keeps unweighted behaviour intact.
+
+    A ``list[str]`` here MUST have ≥ 2 segments — same shape as
+    ``spec_selector`` — so the runtime resolver can read it via
+    ``variable_pool.get(...)``."""
+
+    top_k_override: int | None = None
+    """ADR-v3-6: optional per-source override for the spec's ``top_k``.
+    PN.py joint voting requires every voter to surface the same top-k
+    count per step; this knob lets the consumer re-pin top_k at the
+    aggregation site without editing the upstream source. ``None`` =
+    keep the spec's ``sampling_params.top_k``."""
+
+    fallback_weight: float | None = None
+    """Numeric fallback when a dynamic ``weight`` selector fails to
+    resolve. ``None`` (default) = fail fast: the node raises
+    ``WeightResolutionError`` and FAILs. Setting this to a number opts
+    into a graceful-degrade mode where the per-source weight collapses
+    to ``fallback_weight`` and the trace records a warning (ADR-v3-15)."""
+
+    extra: dict[str, Any] = Field(default_factory=dict)
+    """Per-source pass-through metadata, surfaced to strategies via
+    ``BackendAggregationContext.source_meta``. Lets a strategy author
+    ride extra context (e.g. ``{"confidence_tier": "high"}``) without
+    forking the TokenSourceRef schema."""
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id_not_blank(cls, v: str) -> str:
+        # Mirror ``AggregationInputRef``: trim and reject pure-whitespace
+        # ids so ``"m1"`` and ``"m1 "`` cannot slip through as distinct
+        # keys in trace / weights downstream.
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("source_id must not be blank")
+        return stripped
+
+    @field_validator("spec_selector")
+    @classmethod
+    def _spec_selector_segments_not_blank(cls, v: list[str]) -> list[str]:
+        for i, seg in enumerate(v):
+            if not seg or not seg.strip():
+                raise ValueError(
+                    f"spec_selector segment [{i}] must not be blank; "
+                    "each segment must be a non-empty identifier"
+                )
+        return v
+
+    @field_validator("weight", mode="before")
+    @classmethod
+    def _weight_well_formed(cls, v: Any) -> float | list[str]:
+        # Same finite + non-bool guard as ensemble_aggregator's
+        # AggregationInputRef.weight: bool is an int subclass and would
+        # silently coerce to 1.0/0.0; NaN/Inf would corrupt weighted-sum
+        # tallying downstream.
+        if isinstance(v, bool):
+            raise ValueError(
+                "weight must be a finite number or a VariableSelector list, "
+                "not a bool (bool is an int subclass and would coerce silently)"
+            )
+        if isinstance(v, (int, float)):
+            f = float(v)
+            if not math.isfinite(f):
+                raise ValueError(f"weight must be finite; got {f}")
+            if f <= 0.0:
+                raise ValueError(f"weight must be > 0; got {f}")
+            return f
+        if not isinstance(v, list):
+            raise ValueError("weight must be a finite number or a VariableSelector list")
+        if len(v) < 2:
+            raise ValueError(
+                "weight selector must have at least 2 segments (same shape as spec_selector)"
+            )
+        for i, seg in enumerate(v):
+            if not isinstance(seg, str) or not seg or not seg.strip():
+                raise ValueError(f"weight selector segment [{i}] must not be blank")
+        return v
+
+    @field_validator("fallback_weight", mode="before")
+    @classmethod
+    def _fallback_weight_finite(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            raise ValueError("fallback_weight must be a finite number, not a bool")
+        if not isinstance(v, (int, float)):
+            raise ValueError(f"fallback_weight must be a finite number, got {type(v).__name__}")
+        f = float(v)
+        if not math.isfinite(f):
+            raise ValueError(f"fallback_weight must be finite; got {f}")
+        if f <= 0.0:
+            raise ValueError(f"fallback_weight must be > 0; got {f}")
+        return f
 
 
 class ParallelEnsembleConfig(BaseModel):
@@ -61,17 +193,12 @@ class ParallelEnsembleConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    question_variable: list[str] = Field(min_length=2)
-    """Selector pointing at the user-question variable in the variable
-    pool, e.g. ``["start", "user_input"]``. Two segments minimum because
-    a one-segment selector cannot identify both the source node and the
-    field — same shape Dify uses everywhere else."""
-
-    model_aliases: list[str] = Field(min_length=1)
-    """Registry aliases to fan out across. Length is enforced again by
-    runner-specific ``validate_selection`` (``token_step`` requires ≥ 2);
-    we keep the schema minimum at 1 so ``judge``-style third-party
-    runners that only need a single contestant + a judge stay valid."""
+    token_sources: list[TokenSourceRef] = Field(..., min_length=1)
+    """N upstream sources contributing to the joint-vote loop. Length is
+    enforced again by runner-specific ``validate_selection``
+    (``token_step`` requires ≥ 2); the schema minimum stays at 1 so a
+    judge-style third-party runner that only needs a single contestant +
+    a judge stays valid."""
 
     runner_name: str = Field(min_length=1)
     """Registry key resolved against ``RunnerRegistry`` at run start."""
@@ -92,6 +219,18 @@ class ParallelEnsembleConfig(BaseModel):
     diagnostics: DiagnosticsConfig = Field(default_factory=DiagnosticsConfig)
     """Trace knobs; defaults to the SPI-conservative settings (lightweight
     fields on, heavy ones off, ``storage="metadata"``). See SPI §7."""
+
+    @model_validator(mode="after")
+    def _check_source_id_unique(self) -> ParallelEnsembleConfig:
+        seen: set[str] = set()
+        for ref in self.token_sources:
+            if ref.source_id in seen:
+                raise ValueError(
+                    f"Duplicate source_id '{ref.source_id}' in token_sources; "
+                    "source_id must be unique within a single parallel-ensemble node"
+                )
+            seen.add(ref.source_id)
+        return self
 
 
 class ParallelEnsembleNodeData(BaseNodeData):
@@ -122,11 +261,6 @@ class ParallelEnsembleNodeData(BaseNodeData):
     ensemble: ParallelEnsembleConfig
     """Nested business config — keep DSL extras out of this object."""
 
-    # The node type string is the registry key the framework uses to
-    # resolve this class via ``Node._registry``; surfacing it as a class
-    # attribute (not just an instance field) keeps the registration
-    # legible at import time and matches the pattern in other node
-    # packages (``ensemble_aggregator``, ``llm`` etc.).
     NODE_TYPE: ClassVar[str] = PARALLEL_ENSEMBLE_NODE_TYPE
 
     @model_validator(mode="before")
@@ -144,11 +278,6 @@ class ParallelEnsembleNodeData(BaseNodeData):
         if isinstance(data, dict):
             offenders = sorted(_FORBIDDEN_TOP_LEVEL_KEYS & data.keys())
             if offenders:
-                # ``ValueError`` here surfaces as a pydantic
-                # ``ValidationError`` to the caller, which is the same
-                # error class the ``extra="forbid"`` machinery uses on
-                # the nested ``ParallelEnsembleConfig`` — keeping the
-                # error surface uniform across both defences.
                 raise ValueError(
                     f"parallel-ensemble node data must not carry sensitive fields "
                     f"{offenders}; URLs and credentials live in the model registry "

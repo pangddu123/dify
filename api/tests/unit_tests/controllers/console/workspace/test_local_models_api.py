@@ -79,7 +79,7 @@ class _FakeRunner(EnsembleRunner[_FakeRunnerConfig]):
     def requirements(cls, config: _FakeRunnerConfig) -> list[Requirement]:
         return []
 
-    def run(self, question, backends, aggregator, config, trace):  # pragma: no cover - not exercised
+    def run(self, sources, backends, aggregator, config, trace):  # pragma: no cover - not exercised
         yield DoneEvent(kind="done", text="", metadata={})
 
 

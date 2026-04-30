@@ -48,7 +48,17 @@ P3.B.0 retired the in-package response-mode runner / aggregators
 diagnostics paths through tiny synthetic runners that record
 ``error_count`` / ``backend_count`` / token traces directly into the
 ``TraceCollector`` — every code path the node owns is reachable that
-way without front-running P3.B.3's token-mode rebuild.
+way.
+
+P3.B.3 fixture shape
+--------------------
+
+Tests seed the variable pool with one ``ModelInvocationSpec`` dict per
+source (mirroring what an upstream ``token-model-source`` node would
+have produced) and reference each spec via ``token_sources[i].spec_selector``.
+The synthetic runners ignore ``sources`` content and just yield their
+scripted events — node-level concerns (event translation, status
+derivation, storage) don't depend on what's inside ``SourceInput``.
 """
 
 from __future__ import annotations
@@ -69,8 +79,11 @@ from core.workflow.nodes.parallel_ensemble.entities import (
     ParallelEnsembleNodeData,
 )
 from core.workflow.nodes.parallel_ensemble.exceptions import (
+    InvalidSpecError,
+    MissingSpecError,
     StructuredValidationError,
     UnknownModelAliasError,
+    WeightResolutionError,
 )
 from core.workflow.nodes.parallel_ensemble.node import ParallelEnsembleNode
 from core.workflow.nodes.parallel_ensemble.runners.token_step import (
@@ -102,6 +115,7 @@ from core.workflow.nodes.parallel_ensemble.spi.runner import (
     DoneEvent,
     EnsembleRunner,
     RunnerEvent,
+    SourceInput,
     TokenEvent,
 )
 from core.workflow.nodes.parallel_ensemble.spi.trace import (
@@ -283,24 +297,25 @@ class _ScriptedRunner(EnsembleRunner[_ScriptedConfig]):
 
     def run(
         self,
-        question: str,
+        sources: dict[str, SourceInput],
         backends: dict[str, ModelBackend],
         aggregator: Aggregator,
         config: _ScriptedConfig,
         trace: TraceCollector,
     ) -> Iterator[RunnerEvent]:
-        del question, backends, aggregator, config, trace
+        del sources, backends, aggregator, config, trace
         yield from type(self).scripted_events
 
 
 class _BigTopKConfig(BaseModel):
     """Synthetic runner config with no top_k cap.
 
-    ``TokenStepConfig`` caps ``top_k`` at 20 (matches OpenAI), so the
-    natural runner-config path can never produce a ``min_top_k=25``
-    requirement. To exercise the §9 requirements-rejection branch we
-    need a config schema that lets a 25 through to ``requirements()``
-    without pydantic intercepting it first.
+    Post-ADR-v3-16 ``TokenStepConfig`` no longer carries ``top_k`` —
+    per-source ``TokenStepParams`` own it. To exercise the §9
+    requirements-rejection branch in isolation we still need a
+    runner-config schema that emits a ``min_top_k`` requirement;
+    ``_BigTopKConfig`` keeps the legacy shape so the test reaches the
+    cap-rejection path through both code paths.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -327,13 +342,13 @@ class _BigTopKRunner(EnsembleRunner[_BigTopKConfig]):
 
     def run(
         self,
-        question: str,
+        sources: dict[str, SourceInput],
         backends: dict[str, ModelBackend],
         aggregator: Aggregator,
         config: _BigTopKConfig,
         trace: TraceCollector,
     ) -> Iterator[RunnerEvent]:
-        del question, backends, aggregator, config, trace
+        del sources, backends, aggregator, config, trace
         yield DoneEvent(kind="done", text="", metadata={})
 
 
@@ -383,13 +398,13 @@ class _RejectingRunner(EnsembleRunner[_ScriptedConfig]):
 
     def run(
         self,
-        question: str,
+        sources: dict[str, SourceInput],
         backends: dict[str, ModelBackend],
         aggregator: Aggregator,
         config: _ScriptedConfig,
         trace: TraceCollector,
     ) -> Iterator[RunnerEvent]:
-        del question, backends, aggregator, config, trace
+        del sources, backends, aggregator, config, trace
         yield DoneEvent(kind="done", text="", metadata={})
 
 
@@ -498,10 +513,47 @@ class _FakeBackendRegistry:
 # ── Node factory helper ──────────────────────────────────────────────────
 
 
-def _build_pool(question: str = "is the sky blue?") -> VariablePool:
+def _make_spec_dict(
+    *,
+    model_alias: str,
+    prompt: str = "hi",
+    sampling_params: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a ``ModelInvocationSpec``-shaped dict for the variable pool.
+
+    Mirrors what an upstream ``token-model-source`` node would have
+    yielded into ``outputs.spec``. ``sampling_params`` defaults to the
+    PN.py-friendly ``top_k=5`` so the synthetic ``_BigTopKRunner`` /
+    requirements path lands on a value the §9 pipeline can compare
+    against the runner's own ``min_top_k``.
+    """
+    return {
+        "model_alias": model_alias,
+        "prompt": prompt,
+        "sampling_params": dict(sampling_params or {"top_k": 5}),
+        "extra": dict(extra or {}),
+    }
+
+
+def _build_pool(
+    aliases: list[str],
+    *,
+    sampling_params: dict[str, Any] | None = None,
+) -> tuple[VariablePool, list[list[str]]]:
+    """Seed one ``ModelInvocationSpec`` per alias, return pool + selectors.
+
+    Each spec lives at ``["src_<i>", "spec"]`` so the test can wire
+    matching ``token_sources[i].spec_selector`` entries with the same
+    shape an upstream ``token-model-source`` node would produce.
+    """
     pool = VariablePool()
-    pool.add(["start", "user_input"], question)
-    return pool
+    selectors: list[list[str]] = []
+    for i, alias in enumerate(aliases):
+        node_id = f"src_{i}"
+        pool.add([node_id, "spec"], _make_spec_dict(model_alias=alias, sampling_params=sampling_params))
+        selectors.append([node_id, "spec"])
+    return pool, selectors
 
 
 def _make_node(
@@ -517,13 +569,16 @@ def _make_node(
     backends: dict[str, type[ModelBackend]] | None = None,
     specs: dict[str, BaseSpec] | None = None,
     pool: VariablePool | None = None,
+    selectors: list[list[str]] | None = None,
+    sampling_params: dict[str, Any] | None = None,
+    token_source_overrides: list[dict[str, Any]] | None = None,
     extra_node_data: dict[str, object] | None = None,
 ) -> ParallelEnsembleNode:
     """Bypass ``Node.__init__`` and inject just the pieces ``_run`` reads.
 
     Mirrors ``ensemble_aggregator/test_node.py::_make_node`` so the two
     suites read symmetrically. The caller supplies registries / specs;
-    sensible defaults paint a 2-alias scripted-runner setup that most
+    sensible defaults paint a 2-source scripted-runner setup that most
     tests can override one field of.
     """
     aliases = model_aliases or ["m1", "m2"]
@@ -532,12 +587,28 @@ def _make_node(
     aggregators = aggregators or {"_no_signal": _NoSignalAggregator}
     backends = backends or {"synthetic": _ResponseOnlyBackend}
 
+    if pool is None:
+        pool, default_selectors = _build_pool(aliases, sampling_params=sampling_params)
+        if selectors is None:
+            selectors = default_selectors
+    if selectors is None:
+        selectors = [[f"src_{i}", "spec"] for i in range(len(aliases))]
+
+    token_sources: list[dict[str, Any]] = []
+    for i, sel in enumerate(selectors):
+        ref: dict[str, Any] = {
+            "source_id": f"s{i}",
+            "spec_selector": sel,
+        }
+        if token_source_overrides and i < len(token_source_overrides):
+            ref.update(token_source_overrides[i])
+        token_sources.append(ref)
+
     payload: dict[str, Any] = {
         "type": PARALLEL_ENSEMBLE_NODE_TYPE,
         "title": "pe",
         "ensemble": {
-            "question_variable": ["start", "user_input"],
-            "model_aliases": aliases,
+            "token_sources": token_sources,
             "runner_name": runner_name,
             "runner_config": runner_config or {},
             "aggregator_name": aggregator_name,
@@ -561,7 +632,7 @@ def _make_node(
         pass
 
     rs = _RS()
-    rs.variable_pool = pool or _build_pool()
+    rs.variable_pool = pool
     node.graph_runtime_state = rs  # type: ignore[assignment]
     node._node_data = ParallelEnsembleNodeData.model_validate(payload)
     return node
@@ -619,7 +690,9 @@ class TestEventSequence:
         assert nrr.outputs["tokens_count"] == 0
         assert isinstance(nrr.outputs["elapsed_ms"], int)
         assert nrr.outputs["elapsed_ms"] >= 0
-        assert nrr.inputs["question"] == "is the sky blue?"
+        # Post-ADR-v3-16 inputs view: ``sources`` lists source_ids,
+        # ``models`` lists the resolved aliases per source.
+        assert nrr.inputs["sources"] == ["s0", "s1"]
         assert nrr.inputs["models"] == ["m1", "m2"]
 
 
@@ -669,10 +742,11 @@ class TestStartupValidation:
             backends={"synthetic": _OpenAIStyleBackend},
             runners={"_big_top_k": _BigTopKRunner},
             aggregators={"_no_signal_token": _NoSignalTokenAggregator},
+            sampling_params={"top_k": 25},
         )
         with pytest.raises(StructuredValidationError) as exc:
             list(node._run())
-        # Two backends both reject → both issues land in the structured error.
+        # Two sources both reject → both issues land in the structured error.
         messages = [issue["message"] for issue in exc.value.issues]
         assert all("top_logprobs is capped at 20" in m for m in messages)
         assert all("requested 25" in m for m in messages)
@@ -689,6 +763,30 @@ class TestStartupValidation:
         issue = exc.value.issues[0]
         assert issue["i18n_key"] == "test.rejected"
         assert issue["message"] == "rejected by validate_selection for testing"
+
+    def test_top_k_override_drives_per_source_requirement(self):
+        """ADR-v3-6 + P3.B.3: a single source's ``top_k_override`` drives
+        the §9 requirements pass for *that* source — sibling sources at
+        the spec's default top_k stay un-rejected. Pins that the
+        per-source effective top_k actually flows into
+        ``backend.validate_requirements`` rather than the shared
+        runner-config value."""
+        node = _make_node(
+            runner_name="_big_top_k",
+            runner_config={"top_k": 5},
+            aggregator_name="_no_signal_token",
+            backends={"synthetic": _OpenAIStyleBackend},
+            runners={"_big_top_k": _BigTopKRunner},
+            aggregators={"_no_signal_token": _NoSignalTokenAggregator},
+            sampling_params={"top_k": 5},
+            token_source_overrides=[{"top_k_override": 25}, {}],
+        )
+        with pytest.raises(StructuredValidationError) as exc:
+            list(node._run())
+        messages = [issue["message"] for issue in exc.value.issues]
+        # Only the overridden source trips the cap; sibling stays clean.
+        assert len(messages) == 1
+        assert "requested 25" in messages[0]
 
 
 # ── Per-backend timeout / failure handling ───────────────────────────────
@@ -726,13 +824,13 @@ class _SummaryRecordingRunner(EnsembleRunner[_ScriptedConfig]):
 
     def run(
         self,
-        question: str,
+        sources: dict[str, SourceInput],
         backends: dict[str, ModelBackend],
         aggregator: Aggregator,
         config: _ScriptedConfig,
         trace: TraceCollector,
     ) -> Iterator[RunnerEvent]:
-        del question, backends, aggregator, config
+        del sources, backends, aggregator, config
         cls = type(self)
         # Surface per-alias errors via record_response so the trace's
         # response_trace section covers the surfaces the node-level
@@ -769,7 +867,7 @@ class TestBackendFailures:
         _SummaryRecordingRunner.error_count = 1
         _SummaryRecordingRunner.backend_count = 2
         _SummaryRecordingRunner.yield_text = "ok"
-        _SummaryRecordingRunner.per_alias_error = {"m2": "TimeoutError: timed out"}
+        _SummaryRecordingRunner.per_alias_error = {"s1": "TimeoutError: timed out"}
         node = _make_node(
             runner_name="_summary_recording",
             runners={"_summary_recording": _SummaryRecordingRunner},
@@ -783,7 +881,7 @@ class TestBackendFailures:
         assert trace["summary"]["error_count"] == 1
         assert trace["summary"]["backend_count"] == 2
         by_alias = {row["source_id"]: row for row in trace["response_trace"]}
-        assert "TimeoutError" in by_alias["m2"]["error"]
+        assert "TimeoutError" in by_alias["s1"]["error"]
 
     def test_all_timeout(self):
         """Every backend "errored" → FAILED branch fires
@@ -792,8 +890,8 @@ class TestBackendFailures:
         _SummaryRecordingRunner.backend_count = 2
         _SummaryRecordingRunner.yield_text = ""
         _SummaryRecordingRunner.per_alias_error = {
-            "m1": "TimeoutError: timed out",
-            "m2": "TimeoutError: timed out",
+            "s0": "TimeoutError: timed out",
+            "s1": "TimeoutError: timed out",
         }
         node = _make_node(
             runner_name="_summary_recording",
@@ -854,6 +952,34 @@ class TestTraceStorage:
         assert "ensemble_trace" in nrr.process_data
         assert nrr.process_data["ensemble_trace"]["runner_name"] == "_summary_recording"
 
+    def test_trace_carries_real_backend_info(self):
+        """Trace's ``backends`` records each instance's *backend class
+        name* + declared capabilities (not a stripped placeholder), so
+        a debug viewer can tell llama_cpp from openai_compat at a
+        glance and reason about what each contributor *could* do on
+        this run. Pinned because the previous P3.B.3 cut downgraded
+        these to ``backend=""`` / empty caps."""
+        _SummaryRecordingRunner.error_count = 0
+        _SummaryRecordingRunner.backend_count = 2
+        _SummaryRecordingRunner.yield_text = "ok"
+        _SummaryRecordingRunner.per_alias_error = {}
+        node = _make_node(
+            runner_name="_summary_recording",
+            runners={"_summary_recording": _SummaryRecordingRunner},
+            backends={"synthetic": _TokenStepBackend},
+            diagnostics={"storage": "inline"},
+        )
+        events = list(node._run())
+        trace = events[-1].node_run_result.outputs["trace"]
+        backends_info = trace["backends"]
+        assert [bi["id"] for bi in backends_info] == ["s0", "s1"]
+        assert all(bi["backend"] == "token_step_backend" for bi in backends_info)
+        # ``_TokenStepBackend`` declares TOKEN_STEP + TOP_PROBS.
+        assert backends_info[0]["capabilities"] == ["token_step", "top_probs"]
+        # ``model_alias`` rides on metadata so consumers can
+        # cross-reference back to the spec.
+        assert backends_info[0]["metadata"]["model_alias"] == "m1"
+
 
 # ── Diagnostics gating ──────────────────────────────────────────────────
 
@@ -888,20 +1014,20 @@ class TestDiagnosticsGating:
 
             def run(
                 self,
-                question: str,
+                sources: dict[str, SourceInput],
                 backends: dict[str, ModelBackend],
                 aggregator: Aggregator,
                 config: _ScriptedConfig,
                 trace: TraceCollector,
             ) -> Iterator[RunnerEvent]:
-                del question, backends, aggregator, config
+                del sources, backends, aggregator, config
                 trace.record_token_step(
                     {
                         "step": 0,
                         "selected_token": "x",
                         "selected_score": 0.5,
                         "elapsed_ms": 1,
-                        "per_model": {"m1": [{"token": "x", "prob": 0.5, "logit": None}]},
+                        "per_model": {"s0": [{"token": "x", "prob": 0.5, "logit": None}]},
                     }
                 )
                 yield DoneEvent(kind="done", text="x", metadata={})
@@ -920,6 +1046,244 @@ class TestDiagnosticsGating:
         assert trace["token_trace"][0]["selected_token"] == "x"
 
 
+# ── Spec / weight resolution ─────────────────────────────────────────────
+
+
+class TestSpecResolution:
+    """ADR-v3-16 spec resolution: missing / malformed
+    ``ModelInvocationSpec`` fail-fast before any backend is touched."""
+
+    def test_missing_spec_raises(self):
+        """``spec_selector`` resolving to nothing → ``MissingSpecError``."""
+        # Build pool with only one of two expected specs.
+        pool = VariablePool()
+        pool.add(["src_0", "spec"], _make_spec_dict(model_alias="m1"))
+        node = _make_node(pool=pool, selectors=[["src_0", "spec"], ["src_1", "spec"]])
+        with pytest.raises(MissingSpecError) as exc:
+            list(node._run())
+        assert exc.value.source_id == "s1"
+
+    def test_invalid_spec_missing_keys_raises(self):
+        """Resolved value lacking ``prompt`` → ``InvalidSpecError``."""
+        pool = VariablePool()
+        pool.add(["src_0", "spec"], _make_spec_dict(model_alias="m1"))
+        # Second source resolves to a dict missing ``prompt``.
+        pool.add(["src_1", "spec"], {"model_alias": "m2", "sampling_params": {"top_k": 5}})
+        node = _make_node(pool=pool, selectors=[["src_0", "spec"], ["src_1", "spec"]])
+        with pytest.raises(InvalidSpecError) as exc:
+            list(node._run())
+        assert exc.value.source_id == "s1"
+        assert "prompt" in exc.value.reason
+
+    def test_invalid_sampling_params_wrapped_with_source_id(self):
+        """Spec carrying nonsense sampling (e.g. ``top_k=-1``) trips
+        ``TokenStepParams`` validation; the node wraps the bare pydantic
+        error in :class:`InvalidSpecError` so the panel sees *which*
+        source's sampling is broken instead of getting a stack trace
+        with no source attribution."""
+        pool = VariablePool()
+        pool.add(["src_0", "spec"], _make_spec_dict(model_alias="m1"))
+        pool.add(
+            ["src_1", "spec"],
+            _make_spec_dict(model_alias="m2", sampling_params={"top_k": -1}),
+        )
+        node = _make_node(pool=pool, selectors=[["src_0", "spec"], ["src_1", "spec"]])
+        with pytest.raises(InvalidSpecError) as exc:
+            list(node._run())
+        assert exc.value.source_id == "s1"
+        assert "sampling_params" in exc.value.reason
+
+
+# ── Backend-private extras routing ───────────────────────────────────────
+
+
+class TestExtraRouting:
+    """ADR-v3-16: backend-private knobs (mirostat, repetition_penalty,
+    …) ride on ``TokenStepParams.extra`` so a backend that reads
+    ``params.extra`` (e.g. ``llama_cpp.step_token`` writing them
+    straight into the request body) sees them on every fan-out call.
+    Both the upstream spec's ``extra`` and the per-source
+    ``TokenSourceRef.extra`` route through this single channel; ref
+    wins on key collision (consumer-vocab overrides producer-vocab)."""
+
+    def test_spec_extra_reaches_token_step_params(self):
+        """``spec.extra={"mirostat": 2}`` → effective params carry it."""
+
+        captured: dict[str, Any] = {}
+
+        class _CapturingRunner(EnsembleRunner[_ScriptedConfig]):
+            name = "_capturing"
+            config_class: ClassVar[type[BaseModel]] = _ScriptedConfig
+            aggregator_scope: ClassVar[str] = "response"
+            required_capabilities: ClassVar[frozenset[Capability]] = frozenset()
+            i18n_key_prefix: ClassVar[str] = "test.capturing"
+            ui_schema: ClassVar[dict] = {}
+
+            def __init__(self, executor: ThreadPoolExecutor, aggregator_config: BaseModel) -> None:
+                del executor, aggregator_config
+
+            @classmethod
+            def requirements(cls, config: _ScriptedConfig) -> list[Requirement]:
+                del config
+                return []
+
+            def run(
+                self,
+                sources: dict[str, SourceInput],
+                backends: dict[str, ModelBackend],
+                aggregator: Aggregator,
+                config: _ScriptedConfig,
+                trace: TraceCollector,
+            ) -> Iterator[RunnerEvent]:
+                del backends, aggregator, config, trace
+                # Snapshot the sources dict so the assertion can read
+                # the per-source ``params.extra`` after the run.
+                for sid, src in sources.items():
+                    captured[sid] = dict(src["params"].extra)
+                yield DoneEvent(kind="done", text="ok", metadata={})
+
+        pool = VariablePool()
+        pool.add(
+            ["src_0", "spec"],
+            _make_spec_dict(model_alias="m1", extra={"mirostat": 2, "rep_penalty": 1.1}),
+        )
+        pool.add(["src_1", "spec"], _make_spec_dict(model_alias="m2"))
+        node = _make_node(
+            pool=pool,
+            selectors=[["src_0", "spec"], ["src_1", "spec"]],
+            runner_name="_capturing",
+            runners={"_capturing": _CapturingRunner},
+        )
+        list(node._run())
+        # Source 0: spec.extra reaches params.extra unchanged.
+        assert captured["s0"] == {"mirostat": 2, "rep_penalty": 1.1}
+        # Source 1: empty spec.extra → empty params.extra (default).
+        assert captured["s1"] == {}
+
+    def test_ref_extra_overrides_spec_extra(self):
+        """Both layers' extras merge with ref winning on key collision —
+        same precedence ``ensemble_aggregator`` uses for source-level
+        overrides. New keys from either side land additively."""
+
+        captured: dict[str, Any] = {}
+
+        class _CapturingRunner(EnsembleRunner[_ScriptedConfig]):
+            name = "_capturing_ref"
+            config_class: ClassVar[type[BaseModel]] = _ScriptedConfig
+            aggregator_scope: ClassVar[str] = "response"
+            required_capabilities: ClassVar[frozenset[Capability]] = frozenset()
+            i18n_key_prefix: ClassVar[str] = "test.capturingRef"
+            ui_schema: ClassVar[dict] = {}
+
+            def __init__(self, executor: ThreadPoolExecutor, aggregator_config: BaseModel) -> None:
+                del executor, aggregator_config
+
+            @classmethod
+            def requirements(cls, config: _ScriptedConfig) -> list[Requirement]:
+                del config
+                return []
+
+            def run(
+                self,
+                sources: dict[str, SourceInput],
+                backends: dict[str, ModelBackend],
+                aggregator: Aggregator,
+                config: _ScriptedConfig,
+                trace: TraceCollector,
+            ) -> Iterator[RunnerEvent]:
+                del backends, aggregator, config, trace
+                for sid, src in sources.items():
+                    captured[sid] = dict(src["params"].extra)
+                yield DoneEvent(kind="done", text="ok", metadata={})
+
+        pool = VariablePool()
+        pool.add(
+            ["src_0", "spec"],
+            _make_spec_dict(
+                model_alias="m1",
+                extra={"mirostat": 2, "shared": "from_spec"},
+            ),
+        )
+        pool.add(["src_1", "spec"], _make_spec_dict(model_alias="m2"))
+        node = _make_node(
+            pool=pool,
+            selectors=[["src_0", "spec"], ["src_1", "spec"]],
+            runner_name="_capturing_ref",
+            runners={"_capturing_ref": _CapturingRunner},
+            token_source_overrides=[
+                {"extra": {"shared": "from_ref", "ref_only": True}},
+                {},
+            ],
+        )
+        list(node._run())
+        # ``shared`` from ref wins; ``mirostat`` (spec only) and
+        # ``ref_only`` (ref only) both land in the merged dict.
+        assert captured["s0"] == {
+            "mirostat": 2,
+            "shared": "from_ref",
+            "ref_only": True,
+        }
+
+
+# ── Weight resolution ────────────────────────────────────────────────────
+
+
+class TestWeightResolution:
+    """Dynamic ``TokenSourceRef.weight`` selectors fail-fast unless
+    ``fallback_weight`` opts into graceful-degrade (ADR-v3-15)."""
+
+    def test_dynamic_weight_unresolved_no_fallback_raises(self):
+        """Missing variable → ``WeightResolutionError`` (no fallback set)."""
+        # Spec selectors valid; weight selector points at unset variable.
+        pool, selectors = _build_pool(["m1", "m2"])
+        _ScriptedRunner.scripted_events = [DoneEvent(kind="done", text="ok", metadata={})]
+        node = _make_node(
+            pool=pool,
+            selectors=selectors,
+            token_source_overrides=[
+                {"weight": ["weights", "missing"]},
+                {},
+            ],
+        )
+        with pytest.raises(WeightResolutionError) as exc:
+            list(node._run())
+        assert exc.value.source_id == "s0"
+
+    def test_dynamic_weight_fallback_used(self):
+        """Missing variable + ``fallback_weight`` set → degrade silently."""
+        pool, selectors = _build_pool(["m1", "m2"])
+        _ScriptedRunner.scripted_events = [DoneEvent(kind="done", text="ok", metadata={})]
+        node = _make_node(
+            pool=pool,
+            selectors=selectors,
+            token_source_overrides=[
+                {"weight": ["weights", "missing"], "fallback_weight": 0.5},
+                {},
+            ],
+        )
+        events = list(node._run())
+        nrr = events[-1].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
+
+    @pytest.mark.parametrize("bad_value", [0, 0.0, -1.0, -0.0001])
+    def test_dynamic_weight_non_positive_rejected(self, bad_value):
+        """Static weight has a ``> 0`` schema guard, but a dynamic
+        selector is only known at run time — the resolver must apply
+        the same rule (zero would silently zero a voter, negative
+        would let it cancel siblings in weighted-sum tallying)."""
+        pool, selectors = _build_pool(["m1", "m2"])
+        pool.add(["weights", "bad"], bad_value)
+        node = _make_node(
+            pool=pool,
+            selectors=selectors,
+            token_source_overrides=[{"weight": ["weights", "bad"]}, {}],
+        )
+        with pytest.raises(WeightResolutionError) as exc:
+            list(node._run())
+        assert exc.value.source_id == "s0"
+        assert "must be > 0" in exc.value.reason
+
+
 # ── DSL smuggle defence ──────────────────────────────────────────────────
 
 
@@ -932,6 +1296,16 @@ class TestDSLSmuggle:
     level, so the smuggle is caught at run start instead of at parse
     time). All three are exercised below."""
 
+    def _valid_ensemble(self) -> dict[str, Any]:
+        return {
+            "token_sources": [
+                {"source_id": "s0", "spec_selector": ["src_0", "spec"]},
+                {"source_id": "s1", "spec_selector": ["src_1", "spec"]},
+            ],
+            "runner_name": "r",
+            "aggregator_name": "a",
+        }
+
     def test_dsl_rejects_model_url(self):
         """Top-level ``model_url`` triggers the ``mode="before"`` validator
         — rejected before pydantic stashes it in ``__pydantic_extra__``."""
@@ -941,12 +1315,7 @@ class TestDSLSmuggle:
                     "type": PARALLEL_ENSEMBLE_NODE_TYPE,
                     "title": "pe",
                     "model_url": "http://internal:8080",
-                    "ensemble": {
-                        "question_variable": ["start", "user_input"],
-                        "model_aliases": ["a", "b"],
-                        "runner_name": "r",
-                        "aggregator_name": "a",
-                    },
+                    "ensemble": self._valid_ensemble(),
                 }
             )
         assert "model_url" in str(exc.value)
@@ -962,12 +1331,7 @@ class TestDSLSmuggle:
                         "type": PARALLEL_ENSEMBLE_NODE_TYPE,
                         "title": "pe",
                         key: "value",
-                        "ensemble": {
-                            "question_variable": ["start", "user_input"],
-                            "model_aliases": ["a", "b"],
-                            "runner_name": "r",
-                            "aggregator_name": "a",
-                        },
+                        "ensemble": self._valid_ensemble(),
                     }
                 )
             assert key in str(exc.value)
@@ -979,14 +1343,25 @@ class TestDSLSmuggle:
         with pytest.raises(ValidationError) as exc:
             ParallelEnsembleConfig.model_validate(
                 {
-                    "question_variable": ["start", "user_input"],
-                    "model_aliases": ["a", "b"],
-                    "runner_name": "r",
-                    "aggregator_name": "a",
+                    **self._valid_ensemble(),
                     "model_url": "http://x",  # not a declared field of the inner config
                 }
             )
         assert "Extra inputs are not permitted" in str(exc.value) or "model_url" in str(exc.value)
+
+    def test_legacy_keys_rejected(self):
+        """Legacy v2.4 ``question_variable`` / ``model_aliases`` are no
+        longer declared on ``ParallelEnsembleConfig`` (ADR-v3-16); they
+        hit the same ``extra="forbid"`` rejection as any other typo."""
+        for legacy_key in ("question_variable", "model_aliases"):
+            with pytest.raises(ValidationError) as exc:
+                ParallelEnsembleConfig.model_validate(
+                    {
+                        **self._valid_ensemble(),
+                        legacy_key: ["x", "y"],
+                    }
+                )
+            assert legacy_key in str(exc.value) or "Extra inputs are not permitted" in str(exc.value)
 
     def test_dsl_rejects_runner_config_smuggle(self):
         """``runner_config`` is dict-typed at the schema level so a
@@ -996,7 +1371,7 @@ class TestDSLSmuggle:
         pinned here against the real ``TokenStepConfig``, the only
         runner that ships in the box post-P3.B.0."""
         with pytest.raises(ValidationError) as exc:
-            TokenStepConfig.model_validate({"top_k": 5, "model_url": "http://x"})
+            TokenStepConfig.model_validate({"max_len": 5, "model_url": "http://x"})
         assert "Extra inputs are not permitted" in str(exc.value)
 
     def test_dsl_compat_keys_allowed(self):
@@ -1012,12 +1387,7 @@ class TestDSLSmuggle:
                 "params": {"foo": "bar"},
                 "paramSchemas": [{"name": "foo"}],
                 "datasource_label": "x",
-                "ensemble": {
-                    "question_variable": ["start", "user_input"],
-                    "model_aliases": ["a", "b"],
-                    "runner_name": "r",
-                    "aggregator_name": "a",
-                },
+                "ensemble": self._valid_ensemble(),
             }
         )
         # Validation passed → the node-data object exists. Extras land in

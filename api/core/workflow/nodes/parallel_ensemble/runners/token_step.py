@@ -61,10 +61,10 @@ from ..spi.aggregator import (
     TokenPick,
     TokenSignals,
 )
-from ..spi.backend import BackendInfo, ChatMessage, ModelBackend, TokenCandidate, TokenStepParams
+from ..spi.backend import BackendInfo, ModelBackend, TokenCandidate, TokenStepParams
 from ..spi.capability import Capability
 from ..spi.requirements import Requirement, ValidationIssue
-from ..spi.runner import DoneEvent, EnsembleRunner, RunnerEvent, TokenEvent
+from ..spi.runner import DoneEvent, EnsembleRunner, RunnerEvent, SourceInput, TokenEvent
 from ..spi.trace import TokenStepTraceEntry, TraceCollector
 from .think_phase import ThinkPhaseRunner
 
@@ -79,26 +79,29 @@ _END_TOKEN_SENTINEL = "<end>"
 ``backends/llama_cpp.py``. Duplicated rather than imported so the runner
 package does not pick up a hard dependency on a specific backend
 module — third-party backends are expected to surface this sentinel
-through the SPI in the same way (see EXTENSIBILITY_SPEC §3.2)."""
+through the SPI in the same way (see EXTENSIBILITY_SPEC §3.2).
 
-_DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
-"""Matches PN.py ``call_template``'s default system message so the
-existing research workload reproduces under the SPI without prompt
-drift. A future enhancement could make this a config field."""
+Post-ADR-v3-16: the chat-template / system-prompt fallback that PN.py
+inlined here moved upstream to the ``token-model-source`` node. The
+runner now consumes prompts as the source produced them — every
+voter's starting prompt is whatever its source's
+``ModelInvocationSpec.prompt`` carries, so research configurations
+that intentionally feed different priming text per voter (e.g.,
+chain-of-thought vs vanilla) round-trip through the SPI without the
+runner re-templating them."""
 
 
 class TokenStepConfig(BaseModel):
-    """Pydantic schema for ``token_step`` runner config (DSL slice)."""
+    """Pydantic schema for ``token_step`` runner config (DSL slice).
+
+    Post-ADR-v3-16: ``top_k`` no longer lives here. Each source's
+    ``ModelInvocationSpec.sampling_params.top_k`` (optionally
+    overridden by ``TokenSourceRef.top_k_override``) drives both the
+    backend call and the §9 capability cap; surfacing a runner-level
+    ``top_k`` would be misleading because nothing reads it.
+    """
 
     model_config = ConfigDict(extra="forbid")
-
-    top_k: int = Field(default=5, gt=0, le=20)
-    """Number of top candidates each backend reports per token step.
-
-    Capped at 20 because OpenAI / OpenAI-compat backends limit
-    ``top_logprobs`` to 20; beyond that they reject. llama.cpp has no
-    hard cap but matching the lower bound keeps the schema portable
-    across backends without per-runner branching."""
 
     max_len: int = Field(default=1000, gt=0)
     """Hard ceiling on the number of joint tokens produced before the
@@ -122,7 +125,6 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
 
     i18n_key_prefix: ClassVar[str] = "parallelEnsemble.runners.tokenStep"
     ui_schema: ClassVar[dict] = {
-        "top_k": {"control": "number_input", "min": 1, "max": 20, "step": 1},
         "max_len": {"control": "number_input", "min": 1, "step": 1},
         "enable_think": {"control": "switch"},
     }
@@ -145,21 +147,32 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
 
     @classmethod
     def requirements(cls, config: TokenStepConfig) -> list[Requirement]:
-        """Two requirements per config: candidate count + probability access.
+        """Two requirements per source: candidate count + probability access.
 
-        ``min_top_k`` makes the §9 capability filter reject backends
-        that cap below the user-requested ``top_k``. ``needs_logprobs``
-        is a coarser declaration that the runner needs usable
-        probability values, not just rank — backends that omit
-        ``TOP_PROBS`` fail capability filtering before this requirement
-        is even checked, but the explicit declaration is useful for
-        tooltips ("why does this backend show as unavailable?").
+        ``min_top_k`` is a per-source claim — ADR-v3-16 moved ``top_k``
+        out of the runner config and onto each source's effective
+        ``TokenStepParams``, so the runner returns the requirement
+        *shape* (kind + rationale template) and the node substitutes
+        the per-source ``value`` from ``effective_params[sid].top_k``
+        before calling ``backend.validate_requirements``. The
+        placeholder ``value=1`` is what a source would land on if it
+        omitted top_k entirely; the substitution path tested in
+        ``test_top_k_override_drives_per_source_requirement`` pins the
+        contract.
+
+        ``needs_logprobs`` is a coarser declaration that the runner
+        needs usable probability values, not just rank — backends
+        that omit ``TOP_PROBS`` fail capability filtering before this
+        requirement is even checked, but the explicit declaration is
+        useful for tooltips ("why does this backend show as
+        unavailable?").
         """
+        del config
         return [
             {
                 "kind": "min_top_k",
-                "value": config.top_k,
-                "rationale": f"token_step is configured with top_k={config.top_k}",
+                "value": 1,
+                "rationale": "token_step uses each source's effective top_k (ADR-v3-16)",
             },
             {
                 "kind": "needs_logprobs",
@@ -239,7 +252,7 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
 
     def run(
         self,
-        question: str,
+        sources: dict[str, SourceInput],
         backends: dict[str, ModelBackend],
         aggregator: Aggregator,
         config: TokenStepConfig,
@@ -254,17 +267,28 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
 
         run_start = time.perf_counter()
 
-        prompts = self._template_prompts(question, backends)
+        # Pre-rendered per-source prompts come from upstream
+        # ``token-model-source`` nodes (ADR-v3-16). The runner mutates a
+        # local copy so the caller's dict survives the loop intact.
+        prompts: dict[str, str] = {sid: src["prompt"] for sid, src in sources.items()}
+        params_per_source: dict[str, TokenStepParams] = {sid: src["params"] for sid, src in sources.items()}
+        weights: dict[str, float] = {sid: src["weight"] for sid, src in sources.items()}
+        # ``source_meta`` stays empty in token mode — backend-private
+        # extras already ride on ``params.extra`` per source, and v0.3
+        # has no aggregator-vocab per-source field. A future strategy
+        # that wants e.g. ``confidence_tier`` per source can populate
+        # this from a new ``TokenSourceRef`` channel without touching
+        # the runner.
+        source_meta: dict[str, dict[str, object]] = {sid: {} for sid in sources}
 
         if config.enable_think:
             think = ThinkPhaseRunner(self._executor)
             suffixes = think.run(prompts, backends, trace)
-            for alias, suffix in suffixes.items():
+            for sid, suffix in suffixes.items():
                 if suffix:
-                    prompts[alias] = prompts[alias] + suffix
+                    prompts[sid] = prompts[sid] + suffix
 
-        weights = {alias: backend.weight for alias, backend in backends.items()}
-        capabilities = {alias: backend.instance_capabilities for alias, backend in backends.items()}
+        capabilities = {sid: backend.instance_capabilities for sid, backend in backends.items()}
         # Project each ``ModelBackend`` instance to the public
         # ``BackendInfo`` surface so ``TokenAggregator`` implementations
         # can read backend metadata (id / backend-class name / declared
@@ -285,11 +309,6 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
         ]
         runner_config_dump = config.model_dump()
 
-        # Build the per-step sampling params once: PN.py-style joint
-        # voting reuses the same knobs every step. P3.B.3 will let
-        # individual sources override top_k via TokenSourceRef.
-        step_params = TokenStepParams(top_k=config.top_k)
-
         accumulated = ""
         step = 0
         stopped_by = "max_len"
@@ -300,13 +319,13 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
             per_model, per_model_errors = self._step_concurrent(
                 backends=backends,
                 prompts=prompts,
-                params=step_params,
+                params_per_source=params_per_source,
             )
 
             ctx = BackendAggregationContext(
                 sources=list(backends.keys()),
                 weights=weights,
-                source_meta={},
+                source_meta=source_meta,
                 strategy_config=self._aggregator_config.model_dump(),
                 backends=backend_infos,
                 capabilities=capabilities,
@@ -348,8 +367,8 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
                 stopped_by = "all_voters_empty"
                 break
 
-            for alias in prompts:
-                prompts[alias] = prompts[alias] + token
+            for sid in prompts:
+                prompts[sid] = prompts[sid] + token
             accumulated += token
             yield TokenEvent(kind="token", delta=token)
             step += 1
@@ -376,52 +395,22 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
 
     # ── Helpers ───────────────────────────────────────────────────────
 
-    def _template_prompts(
-        self,
-        question: str,
-        backends: dict[str, ModelBackend],
-    ) -> dict[str, str]:
-        """Per-alias initial prompt — chat template applied iff declared.
-
-        Backends without ``CHAT_TEMPLATE`` fall back to the bare
-        question; this is intentionally permissive so the runner runs
-        end-to-end against, say, an OpenAI completion endpoint that
-        doesn't surface a server-side template.
-        """
-        prompts: dict[str, str] = {}
-        messages: list[ChatMessage] = [
-            ChatMessage(role="system", content=_DEFAULT_SYSTEM_PROMPT),
-            ChatMessage(role="user", content=question),
-        ]
-        for alias, backend in backends.items():
-            if Capability.CHAT_TEMPLATE in backend.instance_capabilities:
-                try:
-                    prompt = backend.apply_template(messages)
-                except Exception as exc:
-                    # Template service blip → fall back to question. PN.py's
-                    # equivalent silently returned "", which made the joint
-                    # loop quietly diverge across models; logging here makes
-                    # the failure debuggable without crashing the run.
-                    logger.warning(
-                        "apply_template failed for %s (%s); falling back to bare question",
-                        alias,
-                        exc,
-                    )
-                    prompt = question
-            else:
-                prompt = question
-            prompts[alias] = prompt
-        return prompts
-
     def _step_concurrent(
         self,
         backends: dict[str, ModelBackend],
         prompts: dict[str, str],
-        params: TokenStepParams,
+        params_per_source: dict[str, TokenStepParams],
     ) -> tuple[dict[str, list[TokenCandidate]], dict[str, str]]:
         """Fan out ``step_token`` across backends, partition into success / error.
 
-        A failing backend does not abort the step — its alias lands in
+        Each source carries its own ``TokenStepParams`` (P3.B.3 / ADR-v3-6
+        + ADR-v3-14): the upstream ``token-model-source`` node defines
+        ``temperature`` / ``top_p`` / ``stop`` / ``seed`` / ``max_tokens``;
+        ``TokenSourceRef.top_k_override`` re-pins ``top_k`` at the
+        consumer. The runner just dispatches them — the merge already
+        happened in the node.
+
+        A failing backend does not abort the step — its source_id lands in
         ``per_model_errors`` and the aggregator decides whether the
         remaining voters can still pick a winner. This matches PN.py's
         behaviour of returning ``[['<end>', 0.01]]`` on HTTP failure
@@ -429,16 +418,16 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
         the error explicitly so the trace can record it.
         """
         futures: dict[Future[list[TokenCandidate]], str] = {}
-        for alias, backend in backends.items():
-            future = self._executor.submit(backend.step_token, prompts[alias], params)
-            futures[future] = alias
+        for sid, backend in backends.items():
+            future = self._executor.submit(backend.step_token, prompts[sid], params_per_source[sid])
+            futures[future] = sid
 
         per_model: dict[str, list[TokenCandidate]] = {}
         per_model_errors: dict[str, str] = {}
         for future in futures:
-            alias = futures[future]
+            sid = futures[future]
             try:
-                per_model[alias] = future.result()
+                per_model[sid] = future.result()
             except Exception as exc:
-                per_model_errors[alias] = f"{type(exc).__name__}: {exc}"
+                per_model_errors[sid] = f"{type(exc).__name__}: {exc}"
         return per_model, per_model_errors
