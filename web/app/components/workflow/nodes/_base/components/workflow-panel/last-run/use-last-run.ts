@@ -73,6 +73,7 @@ const singleRunFormParamsHooks: Record<BlockEnum, any> = {
   [BlockEnum.TriggerPlugin]: undefined,
   [BlockEnum.EnsembleAggregator]: undefined,
   [BlockEnum.ParallelEnsemble]: undefined,
+  [BlockEnum.TokenModelSource]: undefined,
 }
 
 const useSingleRunFormParamsHooks = (nodeType: BlockEnum) => {
@@ -114,6 +115,7 @@ const getDataForCheckMoreHooks: Record<BlockEnum, any> = {
   [BlockEnum.TriggerPlugin]: useTriggerPluginGetDataForCheckMore,
   [BlockEnum.EnsembleAggregator]: undefined,
   [BlockEnum.ParallelEnsemble]: undefined,
+  [BlockEnum.TokenModelSource]: undefined,
 }
 
 const useGetDataForCheckMoreHooks = <T>(nodeType: BlockEnum) => {

@@ -134,6 +134,11 @@ export const BLOCKS = [
   },
   {
     classification: BlockClassificationEnum.Transform,
+    type: BlockEnum.TokenModelSource,
+    title: 'Token Model Source',
+  },
+  {
+    classification: BlockClassificationEnum.Transform,
     type: BlockEnum.DocExtractor,
     title: 'Doc Extractor',
   },

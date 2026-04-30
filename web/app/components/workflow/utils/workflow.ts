@@ -40,6 +40,7 @@ export const canRunBySingle = (nodeType: BlockEnum, isChildNode: boolean) => {
     || nodeType === BlockEnum.TriggerPlugin
     || nodeType === BlockEnum.EnsembleAggregator
     || nodeType === BlockEnum.ParallelEnsemble
+    || nodeType === BlockEnum.TokenModelSource
 }
 
 export const isSupportCustomRunForm = (nodeType: BlockEnum) => {

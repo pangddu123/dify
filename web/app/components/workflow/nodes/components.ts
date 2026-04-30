@@ -44,6 +44,8 @@ import StartNode from './start/node'
 import StartPanel from './start/panel'
 import TemplateTransformNode from './template-transform/node'
 import TemplateTransformPanel from './template-transform/panel'
+import TokenModelSourceNode from './token-model-source/node'
+import TokenModelSourcePanel from './token-model-source/panel'
 import ToolNode from './tool/node'
 import ToolPanel from './tool/panel'
 import TriggerPluginNode from './trigger-plugin/node'
@@ -72,6 +74,7 @@ export const NodeComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.VariableAggregator]: VariableAssignerNode,
   [BlockEnum.EnsembleAggregator]: EnsembleAggregatorNode,
   [BlockEnum.ParallelEnsemble]: ParallelEnsembleNode,
+  [BlockEnum.TokenModelSource]: TokenModelSourceNode,
   [BlockEnum.ParameterExtractor]: ParameterExtractorNode,
   [BlockEnum.Iteration]: IterationNode,
   [BlockEnum.Loop]: LoopNode,
@@ -102,6 +105,7 @@ export const PanelComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.VariableAggregator]: VariableAssignerPanel,
   [BlockEnum.EnsembleAggregator]: EnsembleAggregatorPanel,
   [BlockEnum.ParallelEnsemble]: ParallelEnsemblePanel,
+  [BlockEnum.TokenModelSource]: TokenModelSourcePanel,
   [BlockEnum.Assigner]: AssignerPanel,
   [BlockEnum.ParameterExtractor]: ParameterExtractorPanel,
   [BlockEnum.Iteration]: IterationPanel,

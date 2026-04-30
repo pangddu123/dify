@@ -58,6 +58,7 @@ export enum BlockEnum {
   TriggerPlugin = 'trigger-plugin',
   EnsembleAggregator = 'ensemble-aggregator',
   ParallelEnsemble = 'parallel-ensemble',
+  TokenModelSource = 'token-model-source',
 }
 
 export enum ControlMode {

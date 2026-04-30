@@ -2211,6 +2211,17 @@ export const getNodeOutputVars = (
       break
     }
 
+    case BlockEnum.TokenModelSource: {
+      // Mirrors backend ``TokenModelSourceNode._run`` outputs
+      // (api/core/workflow/nodes/token_model_source/node.py): always
+      // emits ``spec`` (the ``ModelInvocationSpec`` payload) plus a
+      // top-level ``model_alias`` for panels that don't want to unpack
+      // the spec dict.
+      res.push([id, 'spec'])
+      res.push([id, 'model_alias'])
+      break
+    }
+
     case BlockEnum.ParallelEnsemble: {
       // Matches backend ``_finalize_outputs`` (api/core/workflow/nodes/
       // parallel_ensemble/node.py:494): always emits text + tokens_count

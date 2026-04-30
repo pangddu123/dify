@@ -131,6 +131,7 @@ export const SUPPORT_OUTPUT_VARS_NODE = [
   BlockEnum.HumanInput,
   BlockEnum.EnsembleAggregator,
   BlockEnum.ParallelEnsemble,
+  BlockEnum.TokenModelSource,
 ]
 
 export const AGENT_OUTPUT_STRUCT: Var[] = [

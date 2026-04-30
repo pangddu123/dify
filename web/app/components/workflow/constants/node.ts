@@ -4,23 +4,24 @@ import codeDefault from '@/app/components/workflow/nodes/code/default'
 
 import documentExtractorDefault from '@/app/components/workflow/nodes/document-extractor/default'
 import ensembleAggregatorDefault from '@/app/components/workflow/nodes/ensemble-aggregator/default'
-import parallelEnsembleDefault from '@/app/components/workflow/nodes/parallel-ensemble/default'
-
 import httpRequestDefault from '@/app/components/workflow/nodes/http/default'
+
 import humanInputDefault from '@/app/components/workflow/nodes/human-input/default'
 import ifElseDefault from '@/app/components/workflow/nodes/if-else/default'
 import iterationStartDefault from '@/app/components/workflow/nodes/iteration-start/default'
 import iterationDefault from '@/app/components/workflow/nodes/iteration/default'
 import knowledgeRetrievalDefault from '@/app/components/workflow/nodes/knowledge-retrieval/default'
-
 import listOperatorDefault from '@/app/components/workflow/nodes/list-operator/default'
+
 import llmDefault from '@/app/components/workflow/nodes/llm/default'
 import loopEndDefault from '@/app/components/workflow/nodes/loop-end/default'
 import loopStartDefault from '@/app/components/workflow/nodes/loop-start/default'
 import loopDefault from '@/app/components/workflow/nodes/loop/default'
+import parallelEnsembleDefault from '@/app/components/workflow/nodes/parallel-ensemble/default'
 import parameterExtractorDefault from '@/app/components/workflow/nodes/parameter-extractor/default'
 import questionClassifierDefault from '@/app/components/workflow/nodes/question-classifier/default'
 import templateTransformDefault from '@/app/components/workflow/nodes/template-transform/default'
+import tokenModelSourceDefault from '@/app/components/workflow/nodes/token-model-source/default'
 import toolDefault from '@/app/components/workflow/nodes/tool/default'
 import variableAggregatorDefault from '@/app/components/workflow/nodes/variable-assigner/default'
 
@@ -40,6 +41,7 @@ export const WORKFLOW_COMMON_NODES = [
   variableAggregatorDefault,
   ensembleAggregatorDefault,
   parallelEnsembleDefault,
+  tokenModelSourceDefault,
   documentExtractorDefault,
   assignerDefault,
   parameterExtractorDefault,
