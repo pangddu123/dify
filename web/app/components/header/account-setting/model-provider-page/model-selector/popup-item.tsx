@@ -10,7 +10,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@langgenius/dify-ui/popover'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
+import {
+  PreviewCard,
+  PreviewCardContent,
+  PreviewCardTrigger,
+} from '@langgenius/dify-ui/preview-card'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CreditsCoin } from '@/app/components/base/icons/src/vender/line/financeAndECommerce'
@@ -103,7 +107,8 @@ const PopupItem: FC<PopupItemProps> = ({
 
   return (
     <div className="mb-1">
-      <div className="sticky top-12 z-2 flex h-[22px] items-center justify-between bg-components-panel-bg px-3 text-xs font-medium text-text-tertiary">
+      {/* Keep the sticky provider header above model rows while the list scrolls. */}
+      <div className="sticky top-0 z-1 flex h-[22px] items-center justify-between bg-components-panel-bg px-3 text-xs font-medium text-text-tertiary">
         <div
           className="flex cursor-pointer items-center"
           onClick={() => setCollapsed(prev => !prev)}
@@ -160,8 +165,13 @@ const PopupItem: FC<PopupItemProps> = ({
         </Popover>
       </div>
       {!collapsed && model.models.map(modelItem => (
-        <Tooltip key={modelItem.model}>
-          <TooltipTrigger
+        // Preview is supplementary: every field in it (name / type / mode / context size / capabilities)
+        // is reachable from the model's own configuration surface once the row is selected.
+        // Touch + screen reader users rely on the button's primary onClick, not the preview.
+        <PreviewCard key={modelItem.model}>
+          <PreviewCardTrigger
+            delay={150}
+            closeDelay={150}
             render={(
               <button
                 type="button"
@@ -197,10 +207,9 @@ const PopupItem: FC<PopupItemProps> = ({
               </button>
             )}
           />
-          <TooltipContent
+          <PreviewCardContent
             placement="right"
-            variant="plain"
-            className="w-[206px] rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg-blur p-3 backdrop-blur-xs"
+            popupClassName="w-[206px] bg-components-panel-bg-blur p-3 shadow-none backdrop-blur-xs"
           >
             <div className="flex flex-col gap-1">
               <div className="flex flex-col items-start gap-2">
@@ -245,8 +254,8 @@ const PopupItem: FC<PopupItemProps> = ({
                   </div>
                 )}
             </div>
-          </TooltipContent>
-        </Tooltip>
+          </PreviewCardContent>
+        </PreviewCard>
       ))}
     </div>
   )

@@ -5,10 +5,16 @@ import { env } from './env'
 
 const isDev = process.env.NODE_ENV === 'development'
 const withMDX = createMDX()
+const envAllowedDevOrigins = process.env.NEXT_ALLOWED_DEV_ORIGINS?.split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean)
+const allowedDevOrigins = envAllowedDevOrigins?.length
+  ? envAllowedDevOrigins
+  : ['127.0.0.1', 'localhost', '192.168.1.25']
 
 const nextConfig: NextConfig = {
   basePath: env.NEXT_PUBLIC_BASE_PATH,
-  allowedDevOrigins: ['127.0.0.1', 'localhost', '192.168.1.25'],
+  allowedDevOrigins,
   transpilePackages: ['@t3-oss/env-core', '@t3-oss/env-nextjs', 'echarts', 'zrender'],
   turbopack: {
     rules: codeInspectorPlugin({
@@ -44,9 +50,6 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   compiler: {
     removeConsole: isDev ? false : { exclude: ['warn', 'error'] },
-  },
-  experimental: {
-    turbopackFileSystemCacheForDev: false,
   },
 }
 

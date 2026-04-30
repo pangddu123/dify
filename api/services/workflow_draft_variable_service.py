@@ -146,7 +146,7 @@ class DraftVarLoader(VariableLoader):
             variable = segment_to_variable(
                 segment=segment,
                 selector=draft_var.get_selector(),
-                id=draft_var.id,
+                variable_id=draft_var.id,
                 name=draft_var.name,
                 description=draft_var.description,
             )
@@ -180,7 +180,7 @@ class DraftVarLoader(VariableLoader):
             variable = segment_to_variable(
                 segment=segment,
                 selector=draft_var.get_selector(),
-                id=draft_var.id,
+                variable_id=draft_var.id,
                 name=draft_var.name,
                 description=draft_var.description,
             )
@@ -191,7 +191,7 @@ class DraftVarLoader(VariableLoader):
         variable = segment_to_variable(
             segment=segment,
             selector=draft_var.get_selector(),
-            id=draft_var.id,
+            variable_id=draft_var.id,
             name=draft_var.name,
             description=draft_var.description,
         )
@@ -1067,7 +1067,7 @@ class DraftVariableSaver:
             filename = f"{self._generate_filename(name)}.txt"
         else:
             # For other types, store as JSON
-            original_content_serialized = dumps_with_segments(value_seg.value, ensure_ascii=False)
+            original_content_serialized = dumps_with_segments(value_seg.value)
             content_type = "application/json"
             filename = f"{self._generate_filename(name)}.json"
 
@@ -1083,10 +1083,9 @@ class DraftVariableSaver:
             mimetype=content_type,
             user=self._user,
         )
-
+        assert self._user.current_tenant_id
         # Create WorkflowDraftVariableFile record
         variable_file = WorkflowDraftVariableFile(
-            id=uuidv7(),
             upload_file_id=upload_file.id,
             size=original_size,
             length=original_length,
@@ -1095,6 +1094,7 @@ class DraftVariableSaver:
             tenant_id=self._user.current_tenant_id,
             user_id=self._user.id,
         )
+        variable_file.id = str(uuidv7())
         engine = bind = self._session.get_bind()
         assert isinstance(engine, Engine)
         with sessionmaker(bind=engine, expire_on_commit=False).begin() as session:
