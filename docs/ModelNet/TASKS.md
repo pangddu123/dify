@@ -707,13 +707,20 @@ A.1–A.3 全绿；外部贡献者可基于 `ResponseAggregator` + `SourceAggreg
 - ✅ 单测：新增 `components/__tests__/token-source-list.spec.tsx` 14 cases（路由 / 静态↔动态 weight 切换 / top_k_override clear / fallback 仅动态显示 / readonly）；`__tests__/panel.spec.tsx` 翻译到 `token-source-list` mock；`__tests__/requirements-validation.spec.tsx` 翻译 + 新增 6 cases（registry membership × 2 + filterSpecVar × 3 + scope match × 1）；删除 `model-selector.spec.tsx` / `import-button.spec.tsx`
 - ✅ 质量门：`pnpm exec tsc --noEmit` exit 0；`pnpm exec eslint app/components/workflow/nodes/parallel-ensemble` 0 errors / 1 warning（`react/no-array-index-key`，与 ensemble-aggregator 同款 acceptable）；`vitest run app/components/workflow/nodes/parallel-ensemble` **71 passed** / 7 files
 
-### P3.B.5 parallel_ensemble 测试翻译 + 新增（1.5d）
+### P3.B.5 parallel_ensemble 测试翻译 + 新增（1.5d）✅ 2026-04-30
 
 依赖：P3.B.3 + P3.B.4
 
-- 翻译：v2.4 `__tests__/`（事件序列 / §9 / storage / DSL 防护）删 `model_aliases` 用例；用 `token_sources` fixture 替换；`response_level` runner 测试整体删除
-- 新增后端：`TokenStepParams` 合并优先级（`TokenSourceRef.top_k_override` 覆盖 `spec.sampling_params.top_k`） / weight fail-fast / source spec 解析失败 / per-source sampling 真传到 backend（mock backend 断言收到的 params 与 spec.sampling_params 一致）
-- 翻译前端：`__tests__/panel.spec.tsx` 基于 `token-source-list` 而非 `model-selector`；删除 `model-selector.spec.tsx`
+落地详情见 [`docs/ModelNet/P3.B.5_LANDING.md`](./P3.B.5_LANDING.md)。
+
+- ✅ 翻译：P3.B.3 已把 `__tests__/` 切到 `token_sources` fixture（事件序列 / §9 / storage / DSL 防护全套），`response_level` runner / `majority_vote` / `response_concat` 测试源文件已删除；剩余 `model_aliases` 标识符是 SPI `validate_selection(config, model_aliases, registry)` 形参（v3 仍在用），不动；`runners/test_validation_pipeline.py` 文头注释清掉 v0.2 的 `response_level` 描述
+- ✅ 新增后端 4 件（`test_node.py::TestEffectiveParams` × 2 + `TestSpecResolution::test_invalid_spec_non_dict_resolved_value_raises` 4 参数 + `TestWeightResolution::test_dynamic_weight_non_finite_rejected` 3 参数 + `..._falls_back`）：
+  - `top_k_override` 直接覆盖 `params.top_k`（`TestEffectiveParams::test_top_k_override_wins_over_spec_top_k`），不再仅靠 §9 cap 间接见证
+  - per-source sampling（top_k / temperature / top_p / stop / seed）原样穿到 `sources[sid]["params"]`，两条 source 不同 sampling 同时拉到 capturing runner，断言无跨源 alias（`TestEffectiveParams::test_per_source_sampling_reaches_backend`）
+  - `_resolve_specs` 对非 dict 值（string / int / list / 缺失）落到 `InvalidSpecError` / `MissingSpecError`，分支正确
+  - `_resolve_weights` NaN / ±Inf 走 `math.isfinite` 分支拒绝（"not finite" 文案），fallback 配置时仍降级
+- ✅ 翻译前端：P3.B.4 已经把 `__tests__/panel.spec.tsx` 翻到 `token-source-list` mock 并删除 `model-selector.spec.tsx`，本切片只复核未回退
+- ✅ 质量门：`uv run --project api pytest api/tests/unit_tests/core/workflow/nodes/parallel_ensemble` **161 passed**（v3 P3.B.0 后 30 → 40 仅 test_node.py，其它套件保持 121）；`vitest run app/components/workflow/nodes/parallel-ensemble` 71 passed（与 P3.B.4 一致）
 
 ### 🟢 ship B — token 模式完整可用
 
