@@ -14,6 +14,7 @@ from core.workflow.nodes.ensemble_aggregator.exceptions import (
     MissingInputError,
     StrategyConfigError,
     StrategyNotFoundError,
+    WeightResolutionError,
 )
 from graphon.enums import WorkflowNodeExecutionStatus
 from graphon.node_events.node import StreamCompletedEvent
@@ -380,6 +381,211 @@ class TestRunFailurePaths:
         assert issubclass(MissingInputError, Exception)
         assert issubclass(StrategyConfigError, Exception)
         assert issubclass(StrategyNotFoundError, Exception)
+        assert issubclass(WeightResolutionError, Exception)
+
+
+class TestDynamicWeightResolution:
+    """Three-branch coverage of v3 weight resolution (ADR-v3-15):
+
+    * happy path (selector resolves to a finite number),
+    * fail-fast (no fallback → WeightResolutionError → FAILED),
+    * graceful degrade (fallback set → swap in fallback + log warning).
+    """
+
+    @staticmethod
+    def _two_inputs_pool(*, with_weight_var: bool, weight_value=None) -> VariablePool:
+        pool = VariablePool()
+        pool.add(["llm_a", "text"], "A")
+        pool.add(["llm_b", "text"], "A")
+        if with_weight_var:
+            pool.add(["weights_node", "m1"], weight_value)
+        return pool
+
+    @staticmethod
+    def _payload(
+        weight_a, fallback_a=None, weight_b=1.0
+    ) -> dict:
+        ref_a: dict = {
+            "source_id": "m1",
+            "variable_selector": ["llm_a", "text"],
+            "weight": weight_a,
+        }
+        if fallback_a is not None:
+            ref_a["fallback_weight"] = fallback_a
+        return {
+            "title": "agg",
+            "inputs": [
+                ref_a,
+                {
+                    "source_id": "m2",
+                    "variable_selector": ["llm_b", "text"],
+                    "weight": weight_b,
+                },
+            ],
+            "strategy_name": "weighted_majority_vote",
+            "strategy_config": {},
+        }
+
+    def test_dynamic_weight_resolves_from_pool(self):
+        pool = self._two_inputs_pool(with_weight_var=True, weight_value=3.0)
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
+        # m1 weight 3.0 + m2 weight 1.0; both vote 'A' → A:4.0
+        assert nrr.outputs["metadata"]["scores"] == {"A": 4.0}
+        assert nrr.outputs["metadata"]["weights"] == {"m1": 3.0, "m2": 1.0}
+        # No fallbacks used → process_data stays empty.
+        assert nrr.process_data == {}
+
+    def test_dynamic_weight_missing_var_fail_fast(self):
+        # Selector present but pool has no value → WeightResolutionError.
+        pool = self._two_inputs_pool(with_weight_var=False)
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.FAILED
+        assert nrr.error_type == "WeightResolutionError"
+        assert "m1" in nrr.error
+        # 'inputs' metadata still records strategy + count for observability.
+        assert nrr.inputs["strategy"] == "weighted_majority_vote"
+
+    def test_dynamic_weight_non_numeric_fail_fast(self):
+        # Selector resolves but value is a string — must escalate, not silently coerce.
+        pool = self._two_inputs_pool(with_weight_var=True, weight_value="three")
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.FAILED
+        assert nrr.error_type == "WeightResolutionError"
+        assert "not numeric" in nrr.error or "str" in nrr.error
+
+    def test_dynamic_weight_bool_fail_fast(self):
+        # ``True`` is an int subclass in Python — exclude explicitly.
+        pool = self._two_inputs_pool(with_weight_var=True, weight_value=True)
+        payload = self._payload(weight_a=["weights_node", "m1"])
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.FAILED
+        assert nrr.error_type == "WeightResolutionError"
+        assert "bool" in nrr.error or "not numeric" in nrr.error
+
+    def test_dynamic_weight_falls_back_when_fallback_set(self):
+        # Same missing-var setup, but ``fallback_weight=0.5`` opts into degrade.
+        pool = self._two_inputs_pool(with_weight_var=False)
+        payload = self._payload(
+            weight_a=["weights_node", "m1"],
+            fallback_a=0.5,
+            weight_b=2.0,
+        )
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
+        assert nrr.outputs["metadata"]["weights"] == {"m1": 0.5, "m2": 2.0}
+        # ``inputs`` stays clean — fallback warnings are not "inputs".
+        assert "weight_fallbacks" not in nrr.inputs
+        assert "weight_fallback_warnings" not in nrr.inputs
+        # ADR-v3-15 trace surface: process_data carries the per-source
+        # fallback record so the single-step debug panel surfaces it.
+        assert nrr.process_data["weight_fallback_warnings"] == [
+            {
+                "source_id": "m1",
+                "selector": ["weights_node", "m1"],
+                "reason": "variable not present in pool",
+                "fallback_weight": 0.5,
+            }
+        ]
+
+    def test_static_weight_no_pool_lookup_required(self):
+        # No weights_node in the pool — static float must not trigger resolution.
+        pool = self._two_inputs_pool(with_weight_var=False)
+        payload = self._payload(weight_a=2.0, weight_b=1.0)
+        node = _make_node(pool, payload)
+
+        events = list(node._run())
+        nrr = events[0].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
+        # m1 weight 2.0 + m2 weight 1.0; both 'A' → A:3.0
+        assert nrr.outputs["metadata"]["weights"] == {"m1": 2.0, "m2": 1.0}
+
+
+class TestExtraSourceMeta:
+    """``AggregationInputRef.extra`` flows through to ``SourceAggregationContext.source_meta``."""
+
+    def test_extra_surfaces_in_source_meta_via_collect_inputs(self):
+        # Verify via _collect_inputs directly: source_meta carries
+        # per-source extra dict with the ref's payload.
+        pool = VariablePool()
+        pool.add(["llm_a", "text"], "x")
+        pool.add(["llm_b", "text"], "y")
+        node = _make_node(
+            pool,
+            {
+                "title": "agg",
+                "inputs": [
+                    {
+                        "source_id": "a",
+                        "variable_selector": ["llm_a", "text"],
+                        "extra": {"tier": "high"},
+                    },
+                    {
+                        "source_id": "b",
+                        "variable_selector": ["llm_b", "text"],
+                    },
+                ],
+                "strategy_name": "majority_vote",
+                "strategy_config": {},
+            },
+        )
+        signals, weights, source_meta, fallbacks = node._collect_inputs()
+        assert source_meta == {"a": {"tier": "high"}, "b": {}}
+        assert weights == {"a": 1.0, "b": 1.0}
+        assert fallbacks == []
+        assert [s["source_id"] for s in signals] == ["a", "b"]
+
+
+class TestExtractMappingExposesDynamicWeight:
+    def test_dynamic_weight_selector_surfaces_in_mapping(self):
+        config = {
+            "id": "agg_node",
+            "data": {
+                "title": "agg",
+                "inputs": [
+                    {
+                        "source_id": "a",
+                        "variable_selector": ["llm_a", "text"],
+                        "weight": ["weights", "a"],
+                    },
+                    {
+                        "source_id": "b",
+                        "variable_selector": ["llm_b", "text"],
+                        # Static weight → no extra mapping entry.
+                    },
+                ],
+                "strategy_name": "weighted_majority_vote",
+                "strategy_config": {},
+            },
+        }
+        mapping = (
+            EnsembleAggregatorNode.extract_variable_selector_to_variable_mapping(
+                graph_config={}, config=config
+            )
+        )
+        assert dict(mapping) == {
+            "agg_node.inputs.a": ["llm_a", "text"],
+            "agg_node.inputs.a.weight": ["weights", "a"],
+            "agg_node.inputs.b": ["llm_b", "text"],
+        }
 
 
 if __name__ == "__main__":  # pragma: no cover

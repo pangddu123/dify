@@ -14,9 +14,11 @@ from __future__ import annotations
 from .aggregator import (
     AggregationContext,
     Aggregator,
+    BackendAggregationContext,
     ResponseAggregationResult,
     ResponseAggregator,
     ResponseSignal,
+    SourceAggregationContext,
     TokenAggregator,
     TokenPick,
     TokenSignals,
@@ -55,6 +57,7 @@ __all__ = [
     # aggregator
     "AggregationContext",
     "Aggregator",
+    "BackendAggregationContext",
     # backend
     "BackendInfo",
     "BaseSpec",
@@ -78,6 +81,7 @@ __all__ = [
     "ResponseSignal",
     "ResponseTraceEntry",
     "RunnerEvent",
+    "SourceAggregationContext",
     "StreamChunk",
     "ThinkTraceEntry",
     "TokenAggregator",

@@ -55,8 +55,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..registry.runner_registry import register_runner
 from ..spi.aggregator import (
-    AggregationContext,
     Aggregator,
+    BackendAggregationContext,
     TokenAggregator,
     TokenPick,
     TokenSignals,
@@ -280,9 +280,12 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
                 top_k=config.top_k,
             )
 
-            ctx = AggregationContext(
-                backends=[],
+            ctx = BackendAggregationContext(
+                sources=list(backends.keys()),
                 weights=weights,
+                source_meta={},
+                strategy_config=self._aggregator_config.model_dump(),
+                backends=[],
                 capabilities=capabilities,
                 runner_name=type(self).name,
                 runner_config=runner_config_dump,

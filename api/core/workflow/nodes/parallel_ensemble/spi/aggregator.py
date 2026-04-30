@@ -1,16 +1,21 @@
-"""Aggregator SPI — EXTENSIBILITY_SPEC §6.
+"""Aggregator SPI — EXTENSIBILITY_SPEC §6 + DEVELOPMENT_PLAN_v3 §3 (ADR-v3-8).
 
-v0.1 had a single ``aggregate(signals: object, config: dict) -> object``
-that gave third-party authors no idea what shape ``signals`` was. v0.2
-splits this into a generic ``Aggregator[ConfigT, SignalT, ResultT]`` plus
-two typed bases (``ResponseAggregator`` / ``TokenAggregator``) and an
-``AggregationContext`` that carries weights / capabilities / trace
-handle alongside the signals.
+v3 splits the aggregation context into two layers:
 
-A custom new scope (``SemanticAggregator``-style) just subclasses the
-generic base and pairs with a runner that declares the same ``scope``
-string. The framework matches them by string at startup; UI dropdowns
-filter by that string.
+* ``SourceAggregationContext`` — the source view shared by response and
+  token modes (``sources`` / ``weights`` / ``source_meta`` /
+  ``strategy_config``). ``ResponseAggregator`` only ever sees this; a
+  third-party response strategy cannot reach into runner / backend
+  internals it has no business with.
+* ``BackendAggregationContext(SourceAggregationContext)`` — adds the
+  PN.py-loop fields (``backends`` / ``capabilities`` / ``runner_name`` /
+  ``runner_config`` / ``trace`` / ``elapsed_ms_so_far`` /
+  ``step_index``). Only ``TokenAggregator`` receives this layer.
+
+``AggregationContext`` is kept as a back-compat alias for
+``BackendAggregationContext`` so the v2.4 token aggregators land
+unchanged; v3 P3.B.0 will drop the alias once response_level runner +
+``aggregators/response/*`` are deleted (ADR-v3-9).
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import ClassVar, TypedDict, TypeVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .backend import BackendInfo, TokenCandidate
 from .capability import Capability
@@ -29,23 +34,53 @@ SignalT = TypeVar("SignalT")
 ResultT = TypeVar("ResultT")
 
 
-class AggregationContext(BaseModel):
-    """Read-only run context handed to ``aggregate``.
+class SourceAggregationContext(BaseModel):
+    """Source-only view of the aggregation context.
 
-    Frozen so an aggregator that tries to mutate it fails fast. The
-    ``trace`` handle is the same ``TraceCollector`` the runner uses, so
-    aggregators that want to record their reasoning go through the
-    ordinary ``record_token_step`` / ``record_summary`` channels (subject
-    to ``DiagnosticsConfig`` gating).
+    Visible to every aggregator (response + token). Carries just enough
+    to write a strategy that reasons about *which sources voted what
+    weight* — no backend / runner internals leak in.
 
-    ``arbitrary_types_allowed`` is set so the ``trace`` field can hold
-    a non-pydantic ``TraceCollector`` instance.
+    ``frozen=True`` so an aggregator that tries to mutate context fails
+    fast; ``arbitrary_types_allowed`` is unused at this layer but kept
+    for forward-compat with subclasses that do hold non-pydantic fields
+    (``BackendAggregationContext.trace``).
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    backends: list[BackendInfo]
+    sources: list[str]
+    """Ordered ``source_id`` list — token aggregators get backend aliases,
+    response aggregators get whatever the upstream node calls each input."""
+
     weights: dict[str, float]
+    """``source_id`` → effective weight. ensemble_aggregator resolves
+    static / variable-bound weights into this dict before calling
+    ``aggregate``; response_level runner reads ``BackendInfo.weight``."""
+
+    source_meta: dict[str, dict] = Field(default_factory=dict)
+    """Per-source pass-through dict (``AggregationInputRef.extra`` for
+    ensemble_aggregator). Aggregators that want a "tag this source as
+    high-confidence" channel read here."""
+
+    strategy_config: dict = Field(default_factory=dict)
+    """Raw strategy config dict — same payload that ``aggregate`` gets
+    in typed form via the ``config`` parameter. Exposed on the context
+    so reasoning helpers can introspect without a second parse."""
+
+
+class BackendAggregationContext(SourceAggregationContext):
+    """Token-mode context — extends the source view with backend / runner state.
+
+    Only ``TokenAggregator`` instances see this. ``backends`` /
+    ``capabilities`` / ``runner_name`` / ``runner_config`` are the
+    PN.py-loop fields a token strategy genuinely needs (e.g., gating a
+    candidate by the contributing backend's capability set);
+    ``trace`` / ``elapsed_ms_so_far`` / ``step_index`` give per-step
+    diagnostics access subject to ``DiagnosticsConfig`` gating.
+    """
+
+    backends: list[BackendInfo]
     capabilities: dict[str, frozenset[Capability]]
     runner_name: str
     runner_config: dict
@@ -54,12 +89,26 @@ class AggregationContext(BaseModel):
     step_index: int | None = None
 
 
-class Aggregator[ConfigT: BaseModel, SignalT, ResultT](ABC):
-    """Generic three-parameter aggregator base.
+# ── Back-compat alias (deleted in v3 P3.B.0 alongside response_level
+#    runner). Kept now so token aggregators + the soon-to-be-deleted
+#    response_level runner keep importing the old name.
+AggregationContext = BackendAggregationContext
+
+
+class Aggregator[
+    ConfigT: BaseModel,
+    SignalT,
+    ResultT,
+    ContextT: SourceAggregationContext,
+](ABC):
+    """Generic four-parameter aggregator base.
 
     ``ConfigT`` = aggregator config schema (pydantic);
     ``SignalT`` = what the runner hands in (response list, token signals, …);
-    ``ResultT`` = what the runner gets back to drive its ``yield``.
+    ``ResultT`` = what the runner gets back to drive its ``yield``;
+    ``ContextT`` = visible aggregation context — narrow on the typed bases
+    so a response strategy never sees backend / runner internals it has
+    no business with.
 
     Pairs with a runner via the ``scope`` ClassVar. Two built-in scopes
     (``"response"``, ``"token"``) get typed bases below; third-party
@@ -90,7 +139,7 @@ class Aggregator[ConfigT: BaseModel, SignalT, ResultT](ABC):
     def aggregate(
         self,
         signals: SignalT,
-        context: AggregationContext,
+        context: ContextT,
         config: ConfigT,
     ) -> ResultT: ...
 
@@ -117,8 +166,21 @@ class ResponseAggregationResult(TypedDict):
     metadata: dict
 
 
-class ResponseAggregator(Aggregator[ConfigT, list[ResponseSignal], ResponseAggregationResult]):
-    """Typed base for response-scope aggregators (P1 majority_vote / concat fit here)."""
+class ResponseAggregator(
+    Aggregator[
+        ConfigT,
+        list[ResponseSignal],
+        ResponseAggregationResult,
+        SourceAggregationContext,
+    ]
+):
+    """Typed base for response-scope aggregators.
+
+    Sees only the ``SourceAggregationContext`` — backend / runner
+    internals are explicitly hidden so a third-party "weighted majority"
+    strategy never grows a dependency on PN.py-loop fields it doesn't
+    need (ADR-v3-8).
+    """
 
     scope: ClassVar[str] = "response"
 
@@ -149,7 +211,14 @@ class TokenPick(TypedDict):
     reasoning: dict
 
 
-class TokenAggregator(Aggregator[ConfigT, TokenSignals, TokenPick]):
+class TokenAggregator(
+    Aggregator[
+        ConfigT,
+        TokenSignals,
+        TokenPick,
+        BackendAggregationContext,
+    ]
+):
     """Typed base for PN.py-style token-scope aggregators."""
 
     scope: ClassVar[str] = "token"

@@ -18,10 +18,10 @@ from pydantic import BaseModel, ConfigDict
 
 from ...registry.aggregator_registry import register_aggregator
 from ...spi.aggregator import (
-    AggregationContext,
     ResponseAggregationResult,
     ResponseAggregator,
     ResponseSignal,
+    SourceAggregationContext,
 )
 
 
@@ -46,7 +46,7 @@ class MajorityVoteAggregator(ResponseAggregator[MajorityVoteConfig]):
     def aggregate(
         self,
         signals: list[ResponseSignal],
-        context: AggregationContext,
+        context: SourceAggregationContext,
         config: MajorityVoteConfig,
     ) -> ResponseAggregationResult:
         # Errored backends contribute no vote — same as P1 strategy: P1

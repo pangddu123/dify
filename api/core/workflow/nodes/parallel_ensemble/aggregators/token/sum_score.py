@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ...registry.aggregator_registry import register_aggregator
 from ...spi.aggregator import (
-    AggregationContext,
+    BackendAggregationContext,
     TokenAggregator,
     TokenPick,
     TokenSignals,
@@ -59,7 +59,7 @@ class SumScoreAggregator(TokenAggregator[SumScoreConfig]):
     def aggregate(
         self,
         signals: TokenSignals,
-        context: AggregationContext,
+        context: BackendAggregationContext,
         config: SumScoreConfig,
     ) -> TokenPick:
         per_model = signals["per_model"]

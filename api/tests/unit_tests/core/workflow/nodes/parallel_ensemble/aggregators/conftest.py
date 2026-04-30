@@ -35,9 +35,16 @@ def make_ctx():
     ) -> AggregationContext:
         diagnostics = DiagnosticsConfig()
         trace = TraceCollector(diagnostics)
+        # SourceAggregationContext fields (sources/source_meta/strategy_config)
+        # added in v3 P3.A.1 — derive ``sources`` from the weights dict so
+        # existing test callers don't need to pass it.
+        resolved_weights = weights or {}
         return AggregationContext(
+            sources=list(resolved_weights.keys()),
+            source_meta={},
+            strategy_config={},
             backends=[],
-            weights=weights or {},
+            weights=resolved_weights,
             capabilities={},
             runner_name=runner_name,
             runner_config=runner_config or {},

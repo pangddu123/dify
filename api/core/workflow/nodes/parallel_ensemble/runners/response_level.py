@@ -49,8 +49,8 @@ from pydantic import BaseModel, ConfigDict
 
 from ..registry.runner_registry import register_runner
 from ..spi.aggregator import (
-    AggregationContext,
     Aggregator,
+    BackendAggregationContext,
     ResponseAggregator,
     ResponseSignal,
 )
@@ -166,9 +166,12 @@ class ResponseLevelRunner(EnsembleRunner[ResponseLevelConfig]):
 
         weights = {alias: backend.weight for alias, backend in backends.items()}
         capabilities = {alias: backend.instance_capabilities for alias, backend in backends.items()}
-        ctx = AggregationContext(
-            backends=[],
+        ctx = BackendAggregationContext(
+            sources=list(backends.keys()),
             weights=weights,
+            source_meta={},
+            strategy_config=self._aggregator_config.model_dump(),
+            backends=[],
             capabilities=capabilities,
             runner_name=type(self).name,
             runner_config=config.model_dump(),

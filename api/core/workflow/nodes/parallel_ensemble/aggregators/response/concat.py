@@ -12,10 +12,10 @@ from pydantic import BaseModel, ConfigDict
 
 from ...registry.aggregator_registry import register_aggregator
 from ...spi.aggregator import (
-    AggregationContext,
     ResponseAggregationResult,
     ResponseAggregator,
     ResponseSignal,
+    SourceAggregationContext,
 )
 
 
@@ -43,7 +43,7 @@ class ConcatAggregator(ResponseAggregator[ConcatConfig]):
     def aggregate(
         self,
         signals: list[ResponseSignal],
-        context: AggregationContext,
+        context: SourceAggregationContext,
         config: ConcatConfig,
     ) -> ResponseAggregationResult:
         valid = [s for s in signals if s.get("error") is None]

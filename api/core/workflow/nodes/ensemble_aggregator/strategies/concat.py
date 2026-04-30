@@ -1,7 +1,24 @@
-from pydantic import BaseModel, ConfigDict, ValidationError
+"""Concat response strategy.
 
-from ..exceptions import StrategyConfigError
-from .base import AggregationInput, AggregationResult, AggregationStrategy
+v3 upgrade: optional ``order_by_weight`` flag (default off) sorts
+fragments by descending ``context.weights`` before joining — useful
+when downstream readers want the strongest source first. With the
+flag off (default), output order matches the declared ``inputs`` list,
+preserving v2.4 behaviour byte-for-byte.
+"""
+
+from __future__ import annotations
+
+from typing import ClassVar
+
+from pydantic import BaseModel, ConfigDict
+
+from .base import (
+    ResponseAggregationResult,
+    ResponseAggregator,
+    ResponseSignal,
+    SourceAggregationContext,
+)
 from .registry import register
 
 
@@ -10,50 +27,49 @@ class _ConcatConfig(BaseModel):
 
     separator: str = "\n\n---\n\n"
     include_source_label: bool = False
+    order_by_weight: bool = False
+    """Sort fragments by descending ``context.weights`` before joining.
+    Stable on input order when weights tie, so DSLs that set this
+    flag still get deterministic output."""
 
 
 @register("concat")
-class ConcatStrategy(AggregationStrategy):
-    config_schema = {
-        "type": "object",
-        "properties": {
-            "separator": {
-                "type": "string",
-                "default": "\n\n---\n\n",
-            },
-            "include_source_label": {
-                "type": "boolean",
-                "default": False,
-            },
-        },
-        "additionalProperties": False,
+class ConcatStrategy(ResponseAggregator[_ConcatConfig]):
+    config_class: ClassVar[type[BaseModel]] = _ConcatConfig
+    i18n_key_prefix: ClassVar[str] = "nodes.ensembleAggregator.concat"
+    ui_schema: ClassVar[dict] = {
+        "separator": {"control": "text_input"},
+        "include_source_label": {"control": "switch"},
+        "order_by_weight": {"control": "switch"},
     }
 
     def aggregate(
         self,
-        inputs: list[AggregationInput],
-        config: dict[str, object],
-    ) -> AggregationResult:
-        try:
-            parsed = _ConcatConfig.model_validate(config)
-        except ValidationError as e:
-            raise StrategyConfigError("concat", str(e)) from e
+        signals: list[ResponseSignal],
+        context: SourceAggregationContext,
+        config: _ConcatConfig,
+    ) -> ResponseAggregationResult:
+        ordered = list(signals)
+        if config.order_by_weight:
+            # Stable sort: equal weights keep insertion order. ``-weight``
+            # delivers descending without breaking the stable contract.
+            weights = context.weights
+            ordered.sort(key=lambda s: -weights.get(s["source_id"], 1.0))
 
-        if parsed.include_source_label:
-            parts = [f"[{item['source_id']}]\n{item['text']}" for item in inputs]
+        if config.include_source_label:
+            parts = [f"[{s['source_id']}]\n{s['text']}" for s in ordered]
         else:
-            parts = [item["text"] for item in inputs]
+            parts = [s["text"] for s in ordered]
 
-        contributions: dict[str, str] = {
-            item["source_id"]: item["text"] for item in inputs
-        }
+        contributions: dict[str, str] = {s["source_id"]: s["text"] for s in signals}
 
         return {
-            "text": parsed.separator.join(parts),
+            "text": config.separator.join(parts),
             "metadata": {
                 "strategy": "concat",
-                "separator": parsed.separator,
-                "include_source_label": parsed.include_source_label,
+                "separator": config.separator,
+                "include_source_label": config.include_source_label,
+                "order_by_weight": config.order_by_weight,
                 "contributions": contributions,
             },
         }

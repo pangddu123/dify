@@ -112,6 +112,12 @@ DSL { runner: "token_step",                  ┐
 
 ## 3. Capability 矩阵（语义对齐）
 
+> **v3 note (2026-04-29)**：`response_level` runner 在
+> `DEVELOPMENT_PLAN_v3.md` 中删除；response 模式统一走
+> `ensemble-aggregator` + `ResponseAggregator` SPI。下方 v0.2 的
+> `response_level` 相关矩阵保留为历史上下文，token 模式后续按 v3 的
+> `token-model-source` + `parallel-ensemble` aggregator-as-executor 路径演进。
+
 > ⚠️ **本节是整份规范最容易出错、影响最大的地方**。Capability 不是布尔值
 > 那么简单：OpenAI 的 `logprobs` 不是 llama.cpp 的 `top_probs`，vLLM 的
 > `logprobs` 又是另一回事。本节把语义钉死，避免后续 token 级 runner 输出

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ...registry.aggregator_registry import register_aggregator
 from ...spi.aggregator import (
-    AggregationContext,
+    BackendAggregationContext,
     TokenAggregator,
     TokenPick,
     TokenSignals,
@@ -43,7 +43,7 @@ class MaxScoreAggregator(TokenAggregator[MaxScoreConfig]):
     def aggregate(
         self,
         signals: TokenSignals,
-        context: AggregationContext,
+        context: BackendAggregationContext,
         config: MaxScoreConfig,
     ) -> TokenPick:
         per_model = signals["per_model"]

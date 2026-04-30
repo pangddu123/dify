@@ -1,27 +1,31 @@
-from abc import ABC, abstractmethod
-from typing import ClassVar, TypedDict
+"""Strategy base — v3 SPI convergence (ADR-v3-9).
 
+Local strategies (``majority_vote`` / ``concat`` / ``weighted_majority_vote``)
+all inherit ``ResponseAggregator`` from
+``parallel_ensemble.spi.aggregator``; ``aggregate(signals, context, config)``
+takes a ``SourceAggregationContext`` so strategies see weights /
+source_meta / strategy_config but never reach into runner / backend
+internals (those live on ``BackendAggregationContext``).
 
-class AggregationInput(TypedDict):
-    source_id: str
-    text: str
+The v2.4 ``AggregationStrategy`` ABC + bespoke ``AggregationInput`` /
+``AggregationResult`` TypedDicts are gone; we re-use ``ResponseSignal``
+(``source_id`` / ``text`` / ``finish_reason`` / ``elapsed_ms`` / ``error``)
+so a strategy ported from this node lands unchanged in the
+parallel_ensemble response path.
+"""
 
+from __future__ import annotations
 
-class AggregationResult(TypedDict):
-    text: str
-    metadata: dict[str, object]
+from core.workflow.nodes.parallel_ensemble.spi.aggregator import (
+    ResponseAggregationResult,
+    ResponseAggregator,
+    ResponseSignal,
+    SourceAggregationContext,
+)
 
-
-class AggregationStrategy(ABC):
-    name: ClassVar[str] = ""
-    config_schema: ClassVar[dict[str, object]] = {}
-
-    @abstractmethod
-    def aggregate(
-        self,
-        inputs: list[AggregationInput],
-        config: dict[str, object],
-    ) -> AggregationResult: ...
-
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(name={self.name!r})"
+__all__ = [
+    "ResponseAggregationResult",
+    "ResponseAggregator",
+    "ResponseSignal",
+    "SourceAggregationContext",
+]

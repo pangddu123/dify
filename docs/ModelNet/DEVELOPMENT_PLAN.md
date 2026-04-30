@@ -313,6 +313,11 @@ web/app/components/workflow/nodes/ensemble-aggregator/
 
 ## 6. Phase 2 — Token 级并联节点（流式）
 
+> **v3 supersession note (2026-04-29)**：本节已被 `DEVELOPMENT_PLAN_v3.md`
+> Phase B superseded；this section is retained as historical context for the v2.4
+> `parallel-ensemble` implementation. 新的 token 模式工作请以 v3 的
+> aggregator-as-executor + `token-model-source` 架构为准。
+
 ### 6.0 模型注册表（前置基础设施，**Phase 2 第一周做**）
 
 #### 6.0.1 设计
