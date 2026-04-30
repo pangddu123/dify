@@ -39,7 +39,6 @@ from core.workflow.nodes.parallel_ensemble.registry import (
 )
 from core.workflow.nodes.parallel_ensemble.spi import (
     UI_CONTROL_ALLOWLIST,
-    AggregationContext,
     BaseSpec,
     Capability,
     DiagnosticsConfig,
@@ -53,6 +52,8 @@ from core.workflow.nodes.parallel_ensemble.spi import (
     ResponseAggregator,
     ResponseSignal,
     RunnerEvent,
+    SourceAggregationContext,
+    TokenStepParams,
     TraceCollector,
     ValidationIssue,
 )
@@ -133,7 +134,7 @@ class FirstAggregator(ResponseAggregator[FirstConfig]):
     def aggregate(
         self,
         signals: list[ResponseSignal],
-        context: AggregationContext,
+        context: SourceAggregationContext,
         config: FirstConfig,
     ) -> ResponseAggregationResult:
         first = signals[0]
@@ -363,6 +364,6 @@ class TestEchoBackendInstance:
         spec = EchoSpec(id="e1", backend="echo_test", model_name="echo", suffix="!")
         backend = EchoBackend(spec, http=None)
         with pytest.raises(CapabilityNotSupportedError) as exc_info:
-            backend.step_token("hi", top_k=1)
+            backend.step_token("hi", TokenStepParams(top_k=1))
         assert exc_info.value.backend_name == "echo_test"
         assert exc_info.value.capability_name == Capability.TOKEN_STEP.value

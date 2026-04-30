@@ -159,6 +159,97 @@ def test_token_step_prompt_sync(executor, cand):
     assert p1_m2 == p0_m2 + "hello"
 
 
+def test_token_step_populates_backend_aggregation_context(executor, cand):
+    """ADR-v3-8 / P3.B.0: token aggregators read ``BackendInfo`` from the
+    ``backends`` field on the context so they can reason about backend
+    metadata without reaching for ``_spec``. The runner must populate
+    that list (not leave it ``[]``); insertion order matches ``sources``
+    so a strategy can zip the two without keyed lookups.
+    """
+    from typing import ClassVar
+
+    from pydantic import BaseModel, ConfigDict
+
+    from core.workflow.nodes.parallel_ensemble.spi.aggregator import (
+        BackendAggregationContext,
+        TokenAggregator,
+        TokenPick,
+        TokenSignals,
+    )
+
+    class _RecordingConfig(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    class _RecordingAggregator(TokenAggregator[_RecordingConfig]):
+        """Captures the context on each ``aggregate`` call so the test
+        can assert what reached the strategy boundary."""
+
+        name = "_recording"
+        config_class: ClassVar[type[BaseModel]] = _RecordingConfig
+        i18n_key_prefix: ClassVar[str] = "test.recording"
+        ui_schema: ClassVar[dict] = {}
+
+        observed: list[BackendAggregationContext]
+
+        def __init__(self) -> None:
+            self.observed = []
+
+        def aggregate(
+            self,
+            signals: TokenSignals,
+            context: BackendAggregationContext,
+            config: _RecordingConfig,
+        ) -> TokenPick:
+            del config
+            self.observed.append(context)
+            # Pick first available token so the runner advances and we
+            # see ``backends`` recorded for at least one step.
+            for candidates in signals["per_model"].values():
+                if candidates:
+                    return {"token": candidates[0]["token"], "score": 1.0, "reasoning": {}}
+            return {"token": "<end>", "score": 0.0, "reasoning": {}}
+
+    backends = {
+        "m1": FakeBackend(
+            "m1",
+            scripted_steps=[[cand("hi", 0.6)], [cand("<end>", 1.0)]],
+            capabilities=frozenset({Capability.TOKEN_STEP, Capability.TOP_PROBS}),
+        ),
+        "m2": FakeBackend(
+            "m2",
+            scripted_steps=[[cand("hi", 0.4)], [cand("<end>", 1.0)]],
+            capabilities=frozenset({Capability.TOKEN_STEP, Capability.TOP_PROBS, Capability.CHAT_TEMPLATE}),
+        ),
+    }
+    aggregator = _RecordingAggregator()
+    runner = TokenStepRunner(executor=executor, aggregator_config=_RecordingConfig())
+    trace = TraceCollector(DiagnosticsConfig())
+    list(
+        runner.run(
+            question="hi",
+            backends=backends,
+            aggregator=aggregator,
+            config=TokenStepConfig(max_len=4, enable_think=False),
+            trace=trace,
+        )
+    )
+
+    assert aggregator.observed, "aggregator must have been called at least once"
+    ctx = aggregator.observed[0]
+    # backends list mirrors sources order so a strategy can zip them.
+    assert [info["id"] for info in ctx.backends] == ctx.sources
+    by_id = {info["id"]: info for info in ctx.backends}
+    # ``backend`` is the registry-key class name (FakeBackend.name = "fake"),
+    # not the per-instance alias — that's the contract third-party
+    # strategies rely on for capability gating.
+    assert by_id["m1"]["backend"] == "fake"
+    assert by_id["m1"]["model_name"] == "m1"
+    # capabilities surface as a sorted list of enum values, so a
+    # strategy comparing across steps gets a stable representation.
+    assert by_id["m1"]["capabilities"] == ["token_step", "top_probs"]
+    assert by_id["m2"]["capabilities"] == ["chat_template", "token_step", "top_probs"]
+
+
 def test_token_step_handles_per_model_errors(executor, cand):
     """A single backend raising mid-step does not abort the round; the
     remaining voters still pick a winner and the alias lands in the
@@ -227,13 +318,43 @@ def test_validate_selection_enable_think_off_with_think_models_warns():
 
 
 def test_run_rejects_response_aggregator(executor):
-    """Defensive: a response-scope aggregator handed in by mistake fails loud."""
-    from core.workflow.nodes.parallel_ensemble.aggregators.response.concat import (
-        ConcatAggregator,
-        ConcatConfig,
+    """Defensive: a response-scope aggregator handed in by mistake fails loud.
+
+    P3.B.0 retired the in-package response aggregators (ADR-v3-9), so we
+    spin up a tiny stand-in here — the runner only checks ``isinstance``
+    against ``TokenAggregator``, the actual response strategy doesn't
+    matter for the rejection contract.
+    """
+    from typing import ClassVar
+
+    from pydantic import BaseModel
+
+    from core.workflow.nodes.parallel_ensemble.spi.aggregator import (
+        ResponseAggregationResult,
+        ResponseAggregator,
+        ResponseSignal,
+        SourceAggregationContext,
     )
 
-    runner = TokenStepRunner(executor=executor, aggregator_config=ConcatConfig())
+    class _StubResponseConfig(BaseModel):
+        pass
+
+    class _StubResponseAggregator(ResponseAggregator[_StubResponseConfig]):
+        name = "_stub_response"
+        config_class: ClassVar[type[BaseModel]] = _StubResponseConfig
+        i18n_key_prefix: ClassVar[str] = "test.stub"
+        ui_schema: ClassVar[dict] = {}
+
+        def aggregate(
+            self,
+            signals: list[ResponseSignal],
+            context: SourceAggregationContext,
+            config: _StubResponseConfig,
+        ) -> ResponseAggregationResult:
+            del signals, context, config
+            return {"text": "", "metadata": {}}
+
+    runner = TokenStepRunner(executor=executor, aggregator_config=_StubResponseConfig())
     trace = TraceCollector(DiagnosticsConfig())
     backends = {"m1": FakeBackend("m1"), "m2": FakeBackend("m2")}
     with pytest.raises(TypeError, match="TokenAggregator"):
@@ -241,7 +362,7 @@ def test_run_rejects_response_aggregator(executor):
             runner.run(
                 question="hi",
                 backends=backends,
-                aggregator=ConcatAggregator(),  # wrong scope
+                aggregator=_StubResponseAggregator(),  # wrong scope
                 config=TokenStepConfig(max_len=2, enable_think=False),
                 trace=trace,
             )

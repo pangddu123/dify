@@ -32,6 +32,7 @@ from core.workflow.nodes.parallel_ensemble.backends.llama_cpp import (
     LlamaCppBackend,
     LlamaCppSpec,
 )
+from core.workflow.nodes.parallel_ensemble.spi.backend import TokenStepParams
 from core.workflow.nodes.parallel_ensemble.spi.capability import Capability
 
 
@@ -160,7 +161,7 @@ def test_step_token_uses_ssrf_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ssrf_module.ssrf_proxy, "post", _fake_post)
     backend = LlamaCppBackend(_spec(request_timeout_ms=15000), http=ssrf_module.ssrf_proxy)
 
-    candidates = backend.step_token("the answer is", top_k=5)
+    candidates = backend.step_token("the answer is", TokenStepParams(top_k=5))
     assert [c["token"] for c in candidates] == ["yes", "no"]
 
     assert captured["url"] == "http://internal.test:8080/completion"

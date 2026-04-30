@@ -12,7 +12,6 @@ Internal helpers stay on submodules.
 from __future__ import annotations
 
 from .aggregator import (
-    AggregationContext,
     Aggregator,
     BackendAggregationContext,
     ResponseAggregationResult,
@@ -32,6 +31,7 @@ from .backend import (
     ModelBackend,
     StreamChunk,
     TokenCandidate,
+    TokenStepParams,
 )
 from .capability import Capability
 from .requirements import Requirement, ValidationIssue
@@ -55,7 +55,6 @@ from .trace import (
 __all__ = [
     "UI_CONTROL_ALLOWLIST",
     # aggregator
-    "AggregationContext",
     "Aggregator",
     "BackendAggregationContext",
     # backend
@@ -89,6 +88,7 @@ __all__ = [
     "TokenEvent",
     "TokenPick",
     "TokenSignals",
+    "TokenStepParams",
     "TokenStepTraceEntry",
     "TraceCollector",
     "ValidationIssue",

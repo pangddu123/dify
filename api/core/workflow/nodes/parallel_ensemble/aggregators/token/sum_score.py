@@ -2,7 +2,7 @@
 
 For every token that appears in any backend's top-k at the current step,
 sum the per-backend probability mass (optionally weighted by the
-``BackendInfo.weight`` carried on ``AggregationContext``). The token with
+``BackendInfo.weight`` carried on ``BackendAggregationContext``). The token with
 the highest total wins; ties resolve to the lex-smallest token so the
 choice is deterministic across runs and across worker pool ordering
 (PN.py used ``random.choice`` here, which we *deliberately* replace).

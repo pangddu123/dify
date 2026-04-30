@@ -199,10 +199,10 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
 
         # Drive the runner — translate ``token`` into graphon
         # ``StreamChunkEvent``s as they arrive; ``done`` provides the
-        # canonical final text for non-streaming runners
-        # (``response_level``); ``full_response`` is recorded into the
-        # trace but does not stream a chunk (judge-style runners
-        # surface contestants, not user-facing chunks).
+        # canonical final text for runners that produce a single answer
+        # without per-token streaming; ``full_response`` is recorded
+        # into the trace but does not stream a chunk (judge-style
+        # runners surface contestants, not user-facing chunks).
         #
         # ``match`` over the ``kind`` discriminator is the form
         # basedpyright narrows the ``RunnerEvent`` union with — an
@@ -219,11 +219,11 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
                         is_final=False,
                     )
                 case {"kind": "done", "text": done_text}:
-                    # ``response_level`` emits ``done`` with the full
-                    # text; ``token_step`` emits ``done`` after the
-                    # last ``token``. Replacing ``accumulated`` only
-                    # when no tokens streamed keeps both runners'
-                    # contracts working from the same branch — a
+                    # ``token_step`` emits ``done`` after the last
+                    # ``token``; a non-streaming third-party runner can
+                    # emit ``done`` with full text. Replacing
+                    # ``accumulated`` only when no tokens streamed keeps
+                    # both contracts working from the same branch — a
                     # token-streaming runner that also sets
                     # ``DoneEvent.text`` does not erase the per-chunk
                     # accumulator.
@@ -428,13 +428,12 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
     ) -> EnsembleRunner:
         """Construct a runner instance.
 
-        Built-in runners (``token_step`` / ``response_level``) take
+        The built-in ``token_step`` runner takes
         ``(executor, aggregator_config)``; both come from the node
         because the SPI ``run(...)`` signature has no slot for either
         — see ``token_step`` module docstring for the rationale. A
-        third-party runner that disagrees with this ABI signs up to
-        the v0.2 SPI by accepting the same positional pair, even if
-        it ignores one of the args.
+        third-party runner signs up to the v0.2 SPI by accepting the
+        same positional pair, even if it ignores one of the args.
         """
         # The base ``EnsembleRunner`` ABC declares no constructor
         # args — the v0.2 SPI freeze is on public methods, not on
@@ -462,8 +461,8 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
         ``outputs.text`` is always the final answer string (downstream
         LLM / End / Answer nodes consume it without rewriting selectors);
         ``tokens_count`` reflects the number of joint tokens the runner
-        produced (token_step) or 0 (response_level — no per-token loop);
-        ``elapsed_ms`` is wall-clock for the whole run.
+        produced (``token_step``); ``elapsed_ms`` is wall-clock for the
+        whole run.
 
         Trace placement:
 
@@ -517,20 +516,15 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
     ) -> WorkflowNodeExecutionStatus:
         """SUCCEEDED unless the trace summary says every backend errored.
 
-        Two summary shapes the built-in runners produce:
-
-        * ``ResponseLevelRunner`` records ``error_count`` and
-          ``backend_count`` — ``error_count >= backend_count`` means
-          every contestant raised.
-        * ``TokenStepRunner`` records ``stopped_by="all_voters_empty"``
-          when the aggregator gave up because every step's voters were
-          empty.
-
-        A third-party runner that records neither key gets SUCCEEDED
-        by default; if it wants the FAILED signal it can either record
-        ``error_count`` / ``backend_count`` itself, or simply re-raise
-        the underlying exception so graphon's base ``run()`` wraps it
-        as ``NodeRunFailedEvent``.
+        ``TokenStepRunner`` records ``stopped_by="all_voters_empty"``
+        when the aggregator gave up because every step's voters were
+        empty. A third-party runner can opt into the FAILED branch by
+        recording ``error_count`` / ``backend_count`` (``error_count
+        >= backend_count`` means every contestant raised) — useful for
+        judge-style runners that fan out to multiple contestants and
+        want to surface a hard failure on the unanimous-error case.
+        Re-raising the underlying exception so graphon's base ``run()``
+        wraps it as ``NodeRunFailedEvent`` is the simpler alternative.
         """
         summary = trace_data.get("summary", {})
         error_count = summary.get("error_count")

@@ -12,10 +12,11 @@ v3 splits the aggregation context into two layers:
   ``runner_config`` / ``trace`` / ``elapsed_ms_so_far`` /
   ``step_index``). Only ``TokenAggregator`` receives this layer.
 
-``AggregationContext`` is kept as a back-compat alias for
-``BackendAggregationContext`` so the v2.4 token aggregators land
-unchanged; v3 P3.B.0 will drop the alias once response_level runner +
-``aggregators/response/*`` are deleted (ADR-v3-9).
+P3.B.0 dropped the ``AggregationContext`` back-compat alias alongside
+the deletion of the response-mode runner / aggregators (ADR-v3-9). Token
+aggregators import ``BackendAggregationContext`` directly; response
+strategies live under ``ensemble_aggregator`` and only ever see
+``SourceAggregationContext``.
 """
 
 from __future__ import annotations
@@ -56,7 +57,8 @@ class SourceAggregationContext(BaseModel):
     weights: dict[str, float]
     """``source_id`` → effective weight. ensemble_aggregator resolves
     static / variable-bound weights into this dict before calling
-    ``aggregate``; response_level runner reads ``BackendInfo.weight``."""
+    ``aggregate``; the token-mode ``TokenStepRunner`` resolves them from
+    ``ModelBackend.weight`` (i.e. the underlying spec ``weight`` field)."""
 
     source_meta: dict[str, dict] = Field(default_factory=dict)
     """Per-source pass-through dict (``AggregationInputRef.extra`` for
@@ -87,12 +89,6 @@ class BackendAggregationContext(SourceAggregationContext):
     trace: TraceCollector
     elapsed_ms_so_far: int
     step_index: int | None = None
-
-
-# ── Back-compat alias (deleted in v3 P3.B.0 alongside response_level
-#    runner). Kept now so token aggregators + the soon-to-be-deleted
-#    response_level runner keep importing the old name.
-AggregationContext = BackendAggregationContext
 
 
 class Aggregator[

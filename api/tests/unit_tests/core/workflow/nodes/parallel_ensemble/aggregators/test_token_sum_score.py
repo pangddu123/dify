@@ -5,7 +5,7 @@ called out in TASKS.md P2.7:
 * lex tie-break determinism (no ``random.choice``),
 * ``per_model_errors`` handling under both ``skip_empty_voters``
   settings,
-* weight propagation from ``AggregationContext``.
+* weight propagation from ``BackendAggregationContext``.
 """
 
 from __future__ import annotations

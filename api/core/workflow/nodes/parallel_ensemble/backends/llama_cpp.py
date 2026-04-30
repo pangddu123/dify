@@ -35,6 +35,7 @@ from ..spi.backend import (
     ModelBackend,
     StreamChunk,
     TokenCandidate,
+    TokenStepParams,
 )
 from ..spi.capability import Capability
 
@@ -323,13 +324,30 @@ class LlamaCppBackend(ModelBackend):
         # truly incremental.
         return parse_sse_chunks(response.text)
 
-    def step_token(self, prompt: str, top_k: int) -> list[TokenCandidate]:
+    def step_token(self, prompt: str, params: TokenStepParams) -> list[TokenCandidate]:
+        # Apply every per-call sampling knob to the llama.cpp request body
+        # so the runner can vary temperature / top_p / seed / stop / max_tokens
+        # across the same backend instance (ADR-v3-14: lets self-consistency
+        # research use one backend with different temperatures per step).
         body: dict[str, Any] = {
             "prompt": prompt,
-            "max_tokens": 1,
-            "n_probs": top_k,
+            "max_tokens": params.max_tokens,
+            "n_probs": params.top_k,
             "post_sampling_probs": True,
         }
+        if params.temperature is not None:
+            body["temperature"] = params.temperature
+        if params.top_p is not None:
+            body["top_p"] = params.top_p
+        if params.stop:
+            body["stop"] = list(params.stop)
+        if params.seed is not None:
+            body["seed"] = params.seed
+        if params.extra:
+            # Backend-specific knobs ride on ``extra``; the runner-side
+            # contract is pass-through, so a fork that adds e.g. mirostat
+            # picks it up here without changing the SPI surface.
+            body.update(params.extra)
         payload = self._post_json("/completion", body)
         if not isinstance(payload, dict):
             return [TokenCandidate(token=_END_TOKEN_SENTINEL, prob=0.01, logit=None)]

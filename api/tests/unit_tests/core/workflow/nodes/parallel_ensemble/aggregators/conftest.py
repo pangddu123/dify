@@ -1,8 +1,10 @@
-"""Shared fixtures for P2.5 aggregator tests.
+"""Shared fixtures for token-aggregator tests.
 
-Builds an :class:`AggregationContext` with arbitrary defaults so each
-test can pass a single ``ctx()`` call instead of repeating the boilerplate
-for every signal shape.
+Builds a :class:`BackendAggregationContext` with arbitrary defaults so
+each test can pass a single ``ctx()`` call instead of repeating the
+boilerplate for every signal shape. The post-P3.B.0 SPI no longer ships
+the ``AggregationContext`` back-compat alias; token aggregators now
+import the typed ``BackendAggregationContext`` directly.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from typing import Any
 import pytest
 
 from core.workflow.nodes.parallel_ensemble.spi import (
-    AggregationContext,
+    BackendAggregationContext,
     DiagnosticsConfig,
     TraceCollector,
 )
@@ -20,7 +22,7 @@ from core.workflow.nodes.parallel_ensemble.spi import (
 
 @pytest.fixture
 def make_ctx():
-    """Return a factory that builds a minimal ``AggregationContext``.
+    """Return a factory that builds a minimal ``BackendAggregationContext``.
 
     Defaults are wide-open: empty backends list, equal weights set by
     the caller, ``runner_name`` is generic. Tests override only the
@@ -32,14 +34,14 @@ def make_ctx():
         runner_name: str = "test_runner",
         runner_config: dict | None = None,
         step_index: int | None = 0,
-    ) -> AggregationContext:
+    ) -> BackendAggregationContext:
         diagnostics = DiagnosticsConfig()
         trace = TraceCollector(diagnostics)
         # SourceAggregationContext fields (sources/source_meta/strategy_config)
-        # added in v3 P3.A.1 — derive ``sources`` from the weights dict so
-        # existing test callers don't need to pass it.
+        # are inherited by BackendAggregationContext; derive ``sources`` from
+        # the weights dict so existing test callers don't need to pass it.
         resolved_weights = weights or {}
-        return AggregationContext(
+        return BackendAggregationContext(
             sources=list(resolved_weights.keys()),
             source_meta={},
             strategy_config={},

@@ -1,4 +1,4 @@
-"""P2.10 ``ParallelEnsembleNode`` — node-level event sequence + §9 startup
+"""``ParallelEnsembleNode`` — node-level event sequence + §9 startup
 validation + storage policy + DSL smuggle defence.
 
 Where the seams sit
@@ -38,22 +38,17 @@ etc. — too much surface area for unit tests of one node. Mirroring
 ``ensemble_aggregator/test_node.py``, we ``__new__`` the instance and
 inject only the four attributes ``_run`` actually reads
 (``_node_id`` / ``graph_runtime_state`` / ``_node_data`` + the SPI
-keyword args that P2.9 wires from the factory). This keeps the tests
-oriented at *what the node does* rather than at the runtime plumbing
-the factory already covers.
+keyword args the factory wires).
 
 Synthetic runners / backends rather than the built-ins
 ------------------------------------------------------
 
-Most tests use a ``_ScriptedRunner`` that yields a pre-baked event
-sequence: it lets us assert event-by-event without spinning up a
-``ThreadPoolExecutor`` or having to script per-token candidate lists
-just to drive the node-side branch we care about. Where we need a
-real runner end-to-end (storage / diagnostics tests), we use the
-shipped ``ResponseLevelRunner`` + ``MajorityVoteAggregator`` with a
-silent ``FakeBackend`` — that path is already pinned by
-``runners/test_response_level_runner.py``, so here we only assert what
-the *node* does with the trace it produces.
+P3.B.0 retired the in-package response-mode runner / aggregators
+(ADR-v3-9), so node-level tests now exercise storage / failure /
+diagnostics paths through tiny synthetic runners that record
+``error_count`` / ``backend_count`` / token traces directly into the
+``TraceCollector`` — every code path the node owns is reachable that
+way without front-running P3.B.3's token-mode rebuild.
 """
 
 from __future__ import annotations
@@ -66,10 +61,6 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from core.workflow.nodes.parallel_ensemble import PARALLEL_ENSEMBLE_NODE_TYPE
-from core.workflow.nodes.parallel_ensemble.aggregators.response.majority_vote import (
-    MajorityVoteAggregator,
-    MajorityVoteConfig,
-)
 from core.workflow.nodes.parallel_ensemble.aggregators.token.sum_score import (
     SumScoreAggregator,
 )
@@ -82,15 +73,15 @@ from core.workflow.nodes.parallel_ensemble.exceptions import (
     UnknownModelAliasError,
 )
 from core.workflow.nodes.parallel_ensemble.node import ParallelEnsembleNode
-from core.workflow.nodes.parallel_ensemble.runners.response_level import (
-    ResponseLevelConfig,
-    ResponseLevelRunner,
+from core.workflow.nodes.parallel_ensemble.runners.token_step import (
+    TokenStepConfig,
 )
 from core.workflow.nodes.parallel_ensemble.spi.aggregator import (
-    AggregationContext,
     Aggregator,
+    BackendAggregationContext,
     ResponseAggregator,
     ResponseSignal,
+    SourceAggregationContext,
     TokenAggregator,
     TokenPick,
     TokenSignals,
@@ -155,7 +146,7 @@ class _TokenStepBackend(ModelBackend):
 
 
 class _ResponseOnlyBackend(ModelBackend):
-    """No required caps — pairs with ``ResponseLevelRunner``."""
+    """No required caps — pairs with response-scope synthetic runners."""
 
     name = "response_only_backend"
     spec_class: ClassVar[type[BaseSpec]] = _SyntheticSpec
@@ -402,38 +393,44 @@ class _RejectingRunner(EnsembleRunner[_ScriptedConfig]):
         yield DoneEvent(kind="done", text="", metadata={})
 
 
-class _NoSignalAggregator(ResponseAggregator[MajorityVoteConfig]):
+class _NoSignalConfig(BaseModel):
+    """Empty config — paired aggregators have no tunables."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class _NoSignalAggregator(ResponseAggregator[_NoSignalConfig]):
     """Stand-in response aggregator that ignores signals; used to pair
-    with synthetic runners without dragging in P2.5 vote semantics."""
+    with synthetic runners without dragging in real strategy semantics."""
 
     name = "_no_signal"
-    config_class: ClassVar[type[BaseModel]] = MajorityVoteConfig
+    config_class: ClassVar[type[BaseModel]] = _NoSignalConfig
     i18n_key_prefix: ClassVar[str] = "test.noSignal"
     ui_schema: ClassVar[dict] = {}
 
     def aggregate(
         self,
         signals: list[ResponseSignal],
-        context: AggregationContext,
-        config: MajorityVoteConfig,
+        context: SourceAggregationContext,
+        config: _NoSignalConfig,
     ) -> dict:
         del signals, context, config
         return {"text": "", "metadata": {}}
 
 
-class _NoSignalTokenAggregator(TokenAggregator[MajorityVoteConfig]):
+class _NoSignalTokenAggregator(TokenAggregator[_NoSignalConfig]):
     """Stand-in token aggregator paired with ``_BigTopKRunner``."""
 
     name = "_no_signal_token"
-    config_class: ClassVar[type[BaseModel]] = MajorityVoteConfig
+    config_class: ClassVar[type[BaseModel]] = _NoSignalConfig
     i18n_key_prefix: ClassVar[str] = "test.noSignalToken"
     ui_schema: ClassVar[dict] = {}
 
     def aggregate(
         self,
         signals: TokenSignals,
-        context: AggregationContext,
-        config: MajorityVoteConfig,
+        context: BackendAggregationContext,
+        config: _NoSignalConfig,
     ) -> TokenPick:
         del signals, context, config
         return {"token": "", "score": 0.0, "reasoning": {}}
@@ -697,83 +694,115 @@ class TestStartupValidation:
 # ── Per-backend timeout / failure handling ───────────────────────────────
 
 
+class _SummaryRecordingRunner(EnsembleRunner[_ScriptedConfig]):
+    """Runner that records ``error_count`` + ``backend_count`` into the
+    trace summary so the node's ``_derive_status`` SUCCEEDED-vs-FAILED
+    branch is reachable without instantiating a real fan-out runner.
+
+    Class-level ``error_count`` / ``backend_count`` are set per-test
+    before the node instantiates the runner — mirrors the
+    ``_ScriptedRunner.scripted_events`` pattern above.
+    """
+
+    name = "_summary_recording"
+    config_class: ClassVar[type[BaseModel]] = _ScriptedConfig
+    aggregator_scope: ClassVar[str] = "response"
+    required_capabilities: ClassVar[frozenset[Capability]] = frozenset()
+    i18n_key_prefix: ClassVar[str] = "test.summaryRecording"
+    ui_schema: ClassVar[dict] = {}
+
+    error_count: ClassVar[int] = 0
+    backend_count: ClassVar[int] = 0
+    yield_text: ClassVar[str] = ""
+    per_alias_error: ClassVar[dict[str, str]] = {}
+
+    def __init__(self, executor: ThreadPoolExecutor, aggregator_config: BaseModel) -> None:
+        del executor, aggregator_config
+
+    @classmethod
+    def requirements(cls, config: _ScriptedConfig) -> list[Requirement]:
+        del config
+        return []
+
+    def run(
+        self,
+        question: str,
+        backends: dict[str, ModelBackend],
+        aggregator: Aggregator,
+        config: _ScriptedConfig,
+        trace: TraceCollector,
+    ) -> Iterator[RunnerEvent]:
+        del question, backends, aggregator, config
+        cls = type(self)
+        # Surface per-alias errors via record_response so the trace's
+        # response_trace section covers the surfaces the node-level
+        # storage tests touch (mirrors a real runner's contract).
+        for alias, error in cls.per_alias_error.items():
+            trace.record_response(
+                {
+                    "source_id": alias,
+                    "text": None,
+                    "finish_reason": "error",
+                    "tokens_count": 0,
+                    "elapsed_ms": 0,
+                    "error": error,
+                }
+            )
+        trace.record_summary("error_count", cls.error_count)
+        trace.record_summary("backend_count", cls.backend_count)
+        yield DoneEvent(kind="done", text=cls.yield_text, metadata={})
+
+
 class TestBackendFailures:
-    """``ResponseLevelRunner`` is the cleanest harness for the failure
-    semantics: a single backend timeout is absorbed (run keeps running,
-    error logged in trace, status SUCCEEDED), every-backend-failed
-    degrades to FAILED via the trace summary's ``error_count`` /
-    ``backend_count`` invariant the node uses in ``_derive_status``."""
+    """``_SummaryRecordingRunner`` exercises the node's
+    SUCCEEDED-vs-FAILED status derivation without depending on a real
+    fan-out runner: a single backend timeout is absorbed (status
+    SUCCEEDED, error logged in trace), every-backend-failed degrades to
+    FAILED via the trace summary's ``error_count`` / ``backend_count``
+    invariant the node uses in ``_derive_status``.
+    """
 
     def test_single_model_timeout(self):
-        """One backend raises ``TimeoutError`` → run completes SUCCEEDED;
-        trace summary records 1 error against backend_count=2."""
-        backends_map = {
-            "ok_be": _make_response_backend_class("ok"),
-            "timeout_be": _make_response_backend_class("", scripted_exc=TimeoutError("timed out")),
-        }
+        """One backend "errored" in the trace → status SUCCEEDED;
+        ``error_count`` < ``backend_count`` so the FAILED branch stays
+        unreached."""
+        _SummaryRecordingRunner.error_count = 1
+        _SummaryRecordingRunner.backend_count = 2
+        _SummaryRecordingRunner.yield_text = "ok"
+        _SummaryRecordingRunner.per_alias_error = {"m2": "TimeoutError: timed out"}
         node = _make_node(
-            runner_name="response_level",
-            aggregator_name="majority_vote",
-            runners={"response_level": ResponseLevelRunner},
-            aggregators={"majority_vote": MajorityVoteAggregator},
-            backends={
-                "ok_be": backends_map["ok_be"],
-                "timeout_be": backends_map["timeout_be"],
-            },
-            specs={
-                "m1": _SyntheticSpec(id="m1", backend="ok_be", model_name="m1"),
-                "m2": _SyntheticSpec(id="m2", backend="timeout_be", model_name="m2"),
-            },
+            runner_name="_summary_recording",
+            runners={"_summary_recording": _SummaryRecordingRunner},
             diagnostics={"storage": "metadata", "include_per_backend_errors": True},
         )
         events = list(node._run())
         nrr = events[-1].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
-        # One survivor → majority vote returns its text.
         assert nrr.outputs["text"] == "ok"
-        # Trace summary captures the failure even though the run
-        # completed; ``_derive_status`` reads ``error_count`` /
-        # ``backend_count`` to decide SUCCEEDED vs FAILED.
         trace = nrr.process_data["ensemble_trace"]
         assert trace["summary"]["error_count"] == 1
         assert trace["summary"]["backend_count"] == 2
-        # Per-backend trace surfaces the timeout for the failed alias.
         by_alias = {row["source_id"]: row for row in trace["response_trace"]}
         assert "TimeoutError" in by_alias["m2"]["error"]
 
     def test_all_timeout(self):
-        """Every backend raises → ``StreamCompletedEvent.status == FAILED``
-        (response_level's trace summary marks ``error_count == backend_count``)."""
-        backend_cls = _make_response_backend_class("", scripted_exc=TimeoutError("timed out"))
+        """Every backend "errored" → FAILED branch fires
+        (``error_count == backend_count``)."""
+        _SummaryRecordingRunner.error_count = 2
+        _SummaryRecordingRunner.backend_count = 2
+        _SummaryRecordingRunner.yield_text = ""
+        _SummaryRecordingRunner.per_alias_error = {
+            "m1": "TimeoutError: timed out",
+            "m2": "TimeoutError: timed out",
+        }
         node = _make_node(
-            runner_name="response_level",
-            aggregator_name="majority_vote",
-            runners={"response_level": ResponseLevelRunner},
-            aggregators={"majority_vote": MajorityVoteAggregator},
-            backends={"synthetic": backend_cls},
+            runner_name="_summary_recording",
+            runners={"_summary_recording": _SummaryRecordingRunner},
         )
         events = list(node._run())
         nrr = events[-1].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.FAILED
         assert nrr.error == "all backends failed"
-
-
-def _make_response_backend_class(
-    scripted_text: str,
-    *,
-    scripted_exc: Exception | None = None,
-) -> type[ModelBackend]:
-    """Build a ``_ResponseOnlyBackend`` subclass parametrised at class
-    level — backend instances are constructed by the node from the
-    backend *class*, so per-instance kwargs (text, exception) need to
-    travel via the class itself rather than the constructor."""
-
-    class _Param(_ResponseOnlyBackend):
-        def __init__(self, spec: BaseSpec, http: object) -> None:
-            super().__init__(spec, http, scripted_text=scripted_text, scripted_exc=scripted_exc)
-
-    _Param.__name__ = f"_ParamResponseBackend_{scripted_text}_{type(scripted_exc).__name__}"
-    return _Param
 
 
 # ── Trace storage policy ─────────────────────────────────────────────────
@@ -788,20 +817,20 @@ class TestTraceStorage:
     def test_storage_inline(self):
         """``storage="inline"`` → ``outputs.trace`` populated; downstream
         nodes can read the trace blob from the variable pool."""
-        backend_cls = _make_response_backend_class("ok")
+        _SummaryRecordingRunner.error_count = 0
+        _SummaryRecordingRunner.backend_count = 2
+        _SummaryRecordingRunner.yield_text = "ok"
+        _SummaryRecordingRunner.per_alias_error = {}
         node = _make_node(
-            runner_name="response_level",
-            aggregator_name="majority_vote",
-            runners={"response_level": ResponseLevelRunner},
-            aggregators={"majority_vote": MajorityVoteAggregator},
-            backends={"synthetic": backend_cls},
+            runner_name="_summary_recording",
+            runners={"_summary_recording": _SummaryRecordingRunner},
             diagnostics={"storage": "inline"},
         )
         events = list(node._run())
         nrr = events[-1].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
         assert "trace" in nrr.outputs
-        assert nrr.outputs["trace"]["runner_name"] == "response_level"
+        assert nrr.outputs["trace"]["runner_name"] == "_summary_recording"
         # process_data is empty under inline storage — keeps the run-history
         # viewer from double-rendering the trace.
         assert "ensemble_trace" not in nrr.process_data
@@ -810,20 +839,20 @@ class TestTraceStorage:
         """``storage="metadata"`` → trace lands in ``process_data["ensemble_trace"]``;
         ``outputs`` stays clean (no ``trace`` key, so a downstream
         selector against ``[node_id, "trace"]`` deliberately misses)."""
-        backend_cls = _make_response_backend_class("ok")
+        _SummaryRecordingRunner.error_count = 0
+        _SummaryRecordingRunner.backend_count = 2
+        _SummaryRecordingRunner.yield_text = "ok"
+        _SummaryRecordingRunner.per_alias_error = {}
         node = _make_node(
-            runner_name="response_level",
-            aggregator_name="majority_vote",
-            runners={"response_level": ResponseLevelRunner},
-            aggregators={"majority_vote": MajorityVoteAggregator},
-            backends={"synthetic": backend_cls},
+            runner_name="_summary_recording",
+            runners={"_summary_recording": _SummaryRecordingRunner},
             diagnostics={"storage": "metadata"},
         )
         events = list(node._run())
         nrr = events[-1].node_run_result
         assert "trace" not in nrr.outputs
         assert "ensemble_trace" in nrr.process_data
-        assert nrr.process_data["ensemble_trace"]["runner_name"] == "response_level"
+        assert nrr.process_data["ensemble_trace"]["runner_name"] == "_summary_recording"
 
 
 # ── Diagnostics gating ──────────────────────────────────────────────────
@@ -962,11 +991,12 @@ class TestDSLSmuggle:
     def test_dsl_rejects_runner_config_smuggle(self):
         """``runner_config`` is dict-typed at the schema level so a
         DSL like ``runner_config: {model_url: "..."}`` survives parsing.
-        The runner's ``config_class.model_validate`` (run-time, ``extra="forbid"``)
-        is the layer that catches the smuggle — pinned here against the
-        real ``ResponseLevelConfig``."""
+        The runner's ``config_class.model_validate`` (run-time,
+        ``extra="forbid"``) is the layer that catches the smuggle —
+        pinned here against the real ``TokenStepConfig``, the only
+        runner that ships in the box post-P3.B.0."""
         with pytest.raises(ValidationError) as exc:
-            ResponseLevelConfig.model_validate({"model_url": "http://x"})
+            TokenStepConfig.model_validate({"top_k": 5, "model_url": "http://x"})
         assert "Extra inputs are not permitted" in str(exc.value)
 
     def test_dsl_compat_keys_allowed(self):

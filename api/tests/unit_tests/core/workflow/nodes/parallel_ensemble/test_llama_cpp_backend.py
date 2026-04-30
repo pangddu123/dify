@@ -21,6 +21,7 @@ from core.workflow.nodes.parallel_ensemble.backends.llama_cpp import (
     parse_sse_chunks,
     parse_top_probs,
 )
+from core.workflow.nodes.parallel_ensemble.spi.backend import TokenStepParams
 from core.workflow.nodes.parallel_ensemble.spi.capability import Capability
 
 # ── HTTP fakes ─────────────────────────────────────────────────────────
@@ -259,7 +260,7 @@ class TestStepToken:
             )
         )
         backend = LlamaCppBackend(_spec(), http=http)
-        candidates = backend.step_token("the answer is", top_k=5)
+        candidates = backend.step_token("the answer is", TokenStepParams(top_k=5))
         assert [c["token"] for c in candidates] == ["yes", "no"]
         # Body must carry post_sampling_probs=True so probabilities come
         # back top-k re-normalised (BACKEND_CAPABILITIES §2.1).
@@ -277,14 +278,89 @@ class TestStepToken:
             _FakeResponse(payload={"completion_probabilities": [{"top_probs": [{"token": "<|eos|>", "prob": 0.9}]}]})
         )
         backend = LlamaCppBackend(_spec(EOS="<|eos|>"), http=http)
-        out = backend.step_token("p", top_k=1)
+        out = backend.step_token("p", TokenStepParams(top_k=1))
         assert out == [{"token": "<end>", "prob": 0.9, "logit": None}]
 
     def test_malformed_payload_yields_end_sentinel(self) -> None:
         http = _FakeHttp(_FakeResponse(payload="not a dict"))
         backend = LlamaCppBackend(_spec(), http=http)
-        out = backend.step_token("p", top_k=3)
+        out = backend.step_token("p", TokenStepParams(top_k=3))
         assert out == [{"token": "<end>", "prob": 0.01, "logit": None}]
+
+    def test_per_call_sampling_knobs_propagate(self) -> None:
+        """``params.{temperature,top_p,stop,seed,extra}`` reach llama.cpp.
+
+        Pins ADR-v3-14: research code that wants "same model, different
+        temperature for self-consistency" relies on the body actually
+        carrying the per-call sampling state.
+        """
+        http = _FakeHttp(
+            _FakeResponse(payload={"completion_probabilities": [{"top_probs": [{"token": "x", "prob": 1.0}]}]})
+        )
+        backend = LlamaCppBackend(_spec(), http=http)
+        backend.step_token(
+            "p",
+            TokenStepParams(
+                top_k=3,
+                temperature=0.7,
+                top_p=0.9,
+                stop=("<|stop|>",),
+                seed=42,
+                extra={"mirostat": 2},
+            ),
+        )
+        body = http.calls[0]["json"]
+        assert body["temperature"] == 0.7
+        assert body["top_p"] == 0.9
+        assert body["stop"] == ["<|stop|>"]
+        assert body["seed"] == 42
+        assert body["mirostat"] == 2
+
+    def test_extra_is_read_only_and_detached(self) -> None:
+        """``TokenStepParams.extra`` must be immutable + detached from
+        the caller's dict so a backend that pokes at it cannot mutate
+        state shared across the fan-out.
+
+        Regression for the cross-thread aliasing trap: the runner
+        submits one ``params`` instance to N concurrent ``step_token``
+        calls; a mutable ``extra`` would let backend A leak a key to
+        backend B mid-step.
+        """
+        from types import MappingProxyType
+
+        from core.workflow.nodes.parallel_ensemble.spi.backend import TokenStepParams
+
+        caller_dict = {"mirostat": 2}
+        params = TokenStepParams(top_k=3, extra=caller_dict)
+
+        # Detached from caller: mutating their dict afterwards must not
+        # bleed into the params instance.
+        caller_dict["mirostat"] = 999
+        caller_dict["new_key"] = "leak"
+        assert params.extra["mirostat"] == 2
+        assert "new_key" not in params.extra
+
+        # Read-only: a misbehaving backend that does ``params.extra[k] = v``
+        # must fail loud rather than silently mutating shared state.
+        assert isinstance(params.extra, MappingProxyType)
+        with pytest.raises(TypeError):
+            params.extra["leak"] = 1  # type: ignore[index]
+
+    def test_optional_knobs_absent_when_unset(self) -> None:
+        """Defaults stay narrow: ``temperature`` / ``top_p`` / ``stop`` /
+        ``seed`` are omitted from the request body when the params object
+        leaves them unset, so the llama.cpp server applies its own
+        defaults instead of receiving a sentinel."""
+        http = _FakeHttp(
+            _FakeResponse(payload={"completion_probabilities": [{"top_probs": [{"token": "x", "prob": 1.0}]}]})
+        )
+        backend = LlamaCppBackend(_spec(), http=http)
+        backend.step_token("p", TokenStepParams(top_k=3))
+        body = http.calls[0]["json"]
+        assert "temperature" not in body
+        assert "top_p" not in body
+        assert "stop" not in body
+        assert "seed" not in body
 
 
 class TestApplyTemplate:
@@ -349,7 +425,7 @@ class TestSsrfProxyInjection:
 
         monkeypatch.setattr(ssrf_module.ssrf_proxy, "post", _fake_post)
         backend = LlamaCppBackend(_spec(), http=ssrf_module.ssrf_proxy)
-        result = backend.step_token("p", top_k=3)
+        result = backend.step_token("p", TokenStepParams(top_k=3))
         assert result == [{"token": "ok", "prob": 1.0, "logit": None}]
         assert recorded["url"] == "http://internal.test:8080/completion"
         assert recorded["json"]["post_sampling_probs"] is True

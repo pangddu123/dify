@@ -69,10 +69,9 @@ class ParallelEnsembleConfig(BaseModel):
 
     model_aliases: list[str] = Field(min_length=1)
     """Registry aliases to fan out across. Length is enforced again by
-    runner-specific ``validate_selection`` (token_step / response_level
-    both require ≥ 2); we keep the schema minimum at 1 so ``judge``-
-    style runners that only need a single contestant + a judge stay
-    valid here."""
+    runner-specific ``validate_selection`` (``token_step`` requires ≥ 2);
+    we keep the schema minimum at 1 so ``judge``-style third-party
+    runners that only need a single contestant + a judge stay valid."""
 
     runner_name: str = Field(min_length=1)
     """Registry key resolved against ``RunnerRegistry`` at run start."""
@@ -80,8 +79,7 @@ class ParallelEnsembleConfig(BaseModel):
     runner_config: dict[str, object] = Field(default_factory=dict)
     """Free-form blob; runner's ``config_class`` is the second-level
     schema validator (``model_validate`` lands inside ``_run``). Empty
-    dict is a valid default for runners with no tunables (e.g.
-    ``response_level``)."""
+    dict is a valid default for runners with no tunables."""
 
     aggregator_name: str = Field(min_length=1)
     """Registry key resolved against ``AggregatorRegistry``; the §9

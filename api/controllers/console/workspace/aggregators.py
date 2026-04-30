@@ -22,7 +22,7 @@ from core.workflow.nodes.parallel_ensemble.spi.aggregator import Aggregator
 from libs.login import login_required
 
 
-def _project_aggregator(agg_cls: type[Aggregator[Any, Any, Any]]) -> dict[str, Any]:
+def _project_aggregator(agg_cls: type[Aggregator[Any, Any, Any, Any]]) -> dict[str, Any]:
     return {
         "name": agg_cls.name,
         "i18n_key_prefix": agg_cls.i18n_key_prefix,

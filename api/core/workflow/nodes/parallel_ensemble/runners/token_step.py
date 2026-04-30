@@ -61,7 +61,7 @@ from ..spi.aggregator import (
     TokenPick,
     TokenSignals,
 )
-from ..spi.backend import ChatMessage, ModelBackend, TokenCandidate
+from ..spi.backend import BackendInfo, ChatMessage, ModelBackend, TokenCandidate, TokenStepParams
 from ..spi.capability import Capability
 from ..spi.requirements import Requirement, ValidationIssue
 from ..spi.runner import DoneEvent, EnsembleRunner, RunnerEvent, TokenEvent
@@ -265,7 +265,30 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
 
         weights = {alias: backend.weight for alias, backend in backends.items()}
         capabilities = {alias: backend.instance_capabilities for alias, backend in backends.items()}
+        # Project each ``ModelBackend`` instance to the public
+        # ``BackendInfo`` surface so ``TokenAggregator`` implementations
+        # can read backend metadata (id / backend-class name / declared
+        # caps) without poking at ``_spec``. ADR-v3-8 promises this on
+        # the token-mode context — leaving it as ``[]`` would force
+        # third-party token aggregators back to private state.
+        # Insertion order mirrors ``sources`` below so a strategy can
+        # zip the two without keying lookups.
+        backend_infos: list[BackendInfo] = [
+            BackendInfo(
+                id=backend.id,
+                backend=type(backend).name,
+                model_name=backend.model_name,
+                capabilities=sorted(c.value for c in backend.instance_capabilities),
+                metadata={},
+            )
+            for backend in backends.values()
+        ]
         runner_config_dump = config.model_dump()
+
+        # Build the per-step sampling params once: PN.py-style joint
+        # voting reuses the same knobs every step. P3.B.3 will let
+        # individual sources override top_k via TokenSourceRef.
+        step_params = TokenStepParams(top_k=config.top_k)
 
         accumulated = ""
         step = 0
@@ -277,7 +300,7 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
             per_model, per_model_errors = self._step_concurrent(
                 backends=backends,
                 prompts=prompts,
-                top_k=config.top_k,
+                params=step_params,
             )
 
             ctx = BackendAggregationContext(
@@ -285,7 +308,7 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
                 weights=weights,
                 source_meta={},
                 strategy_config=self._aggregator_config.model_dump(),
-                backends=[],
+                backends=backend_infos,
                 capabilities=capabilities,
                 runner_name=type(self).name,
                 runner_config=runner_config_dump,
@@ -394,7 +417,7 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
         self,
         backends: dict[str, ModelBackend],
         prompts: dict[str, str],
-        top_k: int,
+        params: TokenStepParams,
     ) -> tuple[dict[str, list[TokenCandidate]], dict[str, str]]:
         """Fan out ``step_token`` across backends, partition into success / error.
 
@@ -407,7 +430,7 @@ class TokenStepRunner(EnsembleRunner[TokenStepConfig]):
         """
         futures: dict[Future[list[TokenCandidate]], str] = {}
         for alias, backend in backends.items():
-            future = self._executor.submit(backend.step_token, prompts[alias], top_k)
+            future = self._executor.submit(backend.step_token, prompts[alias], params)
             futures[future] = alias
 
         per_model: dict[str, list[TokenCandidate]] = {}

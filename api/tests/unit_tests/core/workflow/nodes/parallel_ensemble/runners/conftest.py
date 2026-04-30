@@ -18,6 +18,7 @@ from core.workflow.nodes.parallel_ensemble.spi.backend import (
     GenerationResult,
     ModelBackend,
     TokenCandidate,
+    TokenStepParams,
 )
 from core.workflow.nodes.parallel_ensemble.spi.capability import Capability
 
@@ -70,7 +71,7 @@ class FakeBackend(ModelBackend):
         self._step_raises = list(step_raises or [])
         self._always_emit = always_emit
         self._step_idx = 0
-        self.step_calls: list[tuple[str, int]] = []
+        self.step_calls: list[tuple[str, TokenStepParams]] = []
         self.generate_calls: list[tuple[str, GenerationParams]] = []
         self.template_calls: list[list[dict[str, str]]] = []
 
@@ -90,8 +91,8 @@ class FakeBackend(ModelBackend):
         self.generate_calls.append((prompt, params))
         return self._scripted_generate
 
-    def step_token(self, prompt: str, top_k: int) -> list[TokenCandidate]:
-        self.step_calls.append((prompt, top_k))
+    def step_token(self, prompt: str, params: TokenStepParams) -> list[TokenCandidate]:
+        self.step_calls.append((prompt, params))
         if self._always_emit is not None:
             return list(self._always_emit)
         if self._step_idx < len(self._step_raises):

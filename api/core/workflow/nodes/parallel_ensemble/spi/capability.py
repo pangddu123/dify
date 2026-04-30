@@ -30,7 +30,7 @@ class Capability(StrEnum):
     """``generate_stream()`` available; yields chunks/tokens incrementally."""
 
     TOKEN_STEP = "token_step"
-    """``step_token(prompt, top_k) -> [TokenCandidate]`` available.
+    """``step_token(prompt, params: TokenStepParams) -> [TokenCandidate]`` available.
 
     Required for PN.py-style token-level voting. Implies the backend can
     advance one token at a time and report the top-k candidates for that

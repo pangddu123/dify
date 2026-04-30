@@ -31,10 +31,10 @@ from core.workflow.nodes.parallel_ensemble.registry import (
     RunnerRegistry,
 )
 from core.workflow.nodes.parallel_ensemble.spi.aggregator import (
-    AggregationContext,
     ResponseAggregationResult,
     ResponseAggregator,
     ResponseSignal,
+    SourceAggregationContext,
 )
 from core.workflow.nodes.parallel_ensemble.spi.capability import Capability
 from core.workflow.nodes.parallel_ensemble.spi.requirements import Requirement
@@ -94,7 +94,7 @@ class _FakeAggregator(ResponseAggregator[_FakeAggregatorConfig]):
     def aggregate(
         self,
         signals: list[ResponseSignal],
-        context: AggregationContext,
+        context: SourceAggregationContext,
         config: _FakeAggregatorConfig,
     ) -> ResponseAggregationResult:  # pragma: no cover - not exercised
         return ResponseAggregationResult(text="", metadata={})

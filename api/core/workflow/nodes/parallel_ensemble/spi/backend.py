@@ -23,10 +23,11 @@ parameter dict.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, ClassVar, TypedDict
+from collections.abc import Iterator, Mapping
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..exceptions import CapabilityNotSupportedError
 from .capability import Capability
@@ -78,6 +79,56 @@ class GenerationParams(TypedDict, total=False):
     top_k: int
     stop: list[str]
     seed: int | None
+
+
+class TokenStepParams(BaseModel):
+    """Per-call sampling knobs handed to ``ModelBackend.step_token`` (P3.B.0 / ADR-v3-14).
+
+    PN.py-style joint runners advance one token at a time; the backend
+    needs sampling state *per call* (not per-instance) so research code
+    that wants "same model, different temperatures for self-consistency"
+    can vary knobs across the same backend instance without rebuilding
+    it. ``frozen=True`` so a misbehaving backend cannot mutate the
+    runner's params dict; ``extra="forbid"`` rejects yaml typos that
+    would otherwise silently no-op.
+
+    Fields are deliberately the cross-backend intersection (top_k /
+    temperature / top_p / max_tokens / stop / seed). Backend-specific
+    knobs (e.g. mirostat, repetition penalty) ride on ``extra``; the
+    backend reads what it understands and ignores the rest. ``max_tokens``
+    defaults to 1 because step_token is by definition a single-token
+    advance — think_phase passes a much larger value for the chain-of-
+    thought pre-pass via ``backend.generate``.
+
+    ``extra`` is wrapped in ``MappingProxyType`` after validation so a
+    backend that pokes at the dict in-place cannot leak state to a
+    sibling backend running the same params instance — the runner
+    fan-out submits one params reference to N concurrent
+    ``step_token`` calls, so a mutable dict there would be a
+    cross-thread aliasing trap. ``stop`` is already a frozen tuple by
+    construction; the rest are immutable scalars.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
+
+    top_k: int = Field(default=5, gt=0)
+    temperature: float | None = Field(default=None, ge=0.0)
+    top_p: float | None = Field(default=None, gt=0.0, le=1.0)
+    max_tokens: int = Field(default=1, gt=0)
+    stop: tuple[str, ...] = Field(default=())
+    seed: int | None = None
+    extra: Mapping[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra", mode="after")
+    @classmethod
+    def _freeze_extra(cls, value: Mapping[str, Any]) -> Mapping[str, Any]:
+        # Defensive copy detaches the proxy from any caller-held dict
+        # that could be mutated after construction; ``MappingProxyType``
+        # then makes the read-only contract enforceable at runtime, not
+        # just at the type-checker layer.
+        if isinstance(value, MappingProxyType):
+            return value
+        return MappingProxyType(dict(value))
 
 
 class TokenCandidate(TypedDict):
@@ -211,12 +262,19 @@ class ModelBackend(ABC):
         """
         raise CapabilityNotSupportedError(self.name, Capability.STREAMING.value)
 
-    def step_token(self, prompt: str, top_k: int) -> list[TokenCandidate]:
+    def step_token(self, prompt: str, params: TokenStepParams) -> list[TokenCandidate]:
         """Single-token advance with top-k candidates. Override iff ``TOKEN_STEP`` declared.
 
-        Contract: returned list has length ``<= top_k``; ``prob`` values
-        are usable iff ``TOP_PROBS`` is declared; ``logit`` is non-None
-        iff ``LOGITS_RAW`` is declared.
+        ``params`` carries every sampling knob *per call* — top_k /
+        temperature / top_p / stop / seed / max_tokens — so the runner
+        loop can vary configuration across steps (or across same-model
+        instances doing self-consistency) without rebuilding the
+        backend. Backends apply the subset they understand and pass
+        ``params.extra`` through to backend-specific keys.
+
+        Contract: returned list has length ``<= params.top_k``; ``prob``
+        values are usable iff ``TOP_PROBS`` is declared; ``logit`` is
+        non-None iff ``LOGITS_RAW`` is declared.
         """
         raise CapabilityNotSupportedError(self.name, Capability.TOKEN_STEP.value)
 
