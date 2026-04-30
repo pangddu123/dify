@@ -693,15 +693,19 @@ A.1–A.3 全绿；外部贡献者可基于 `ResponseAggregator` + `SourceAggreg
 - `runners/{token_step,think_phase}.py` 协作算法不变（PN.py 主循环），但调用 backend 走新 `step_token(prompt, params)` 签名（已在 P3.B.0 完成）
 - DSL 防护：`_FORBIDDEN_TOP_LEVEL_KEYS` 只保留 SSRF 相关键（`model_url`/`api_key`/`api_key_env`/`url`/`endpoint`），不加 `model_aliases` 防护——`extra="forbid"` 会更早拦下
 
-### P3.B.4 parallel_ensemble 前端重构（1.5d）
+### ✅ P3.B.4 parallel_ensemble 前端重构（1.5d，2026-04-30）
 
-依赖：P3.B.3
+依赖：P3.B.3 ✅
 
-- `types.ts` 删 `model_aliases`、**删 `question_variable`**；加 `token_sources: TokenSourceRef[]`（每条 source_id / spec_selector / weight / `top_k_override: number | null` / fallback_weight: number | null / extra）
-- 删除：`components/model-selector.tsx` / `components/import-model-info-button.tsx` / `components/question-variable-select.tsx`（如 v2.4 单独存在）
-- 新增 `components/token-source-list.tsx`：类似 ensemble_aggregator 的 InputList，但 selector 限定为 `outputs.spec` 形态；行内含 weight / top_k_override / fallback_weight 三个输入框
-- 保留：`runner-selector.tsx` / `aggregator-selector.tsx` / `diagnostics-config.tsx` / `dynamic-config-form.tsx`
-- i18n 改：`tokenSources` 替代 `modelAliases`；新增 `tokenSources.topKOverride` / `tokenSources.fallbackWeight`；删除 `questionVariable`
+落地详情见 [`docs/ModelNet/P3.B.4_LANDING.md`](./P3.B.4_LANDING.md)。
+
+- ✅ `types.ts` 删 `model_aliases` / `question_variable`，加 `token_sources: TokenSourceRef[]`（`source_id` / `spec_selector` / `weight: number | ValueSelector` / `top_k_override: number | null` / `fallback_weight: number | null` / `extra`），1:1 镜像后端 schema；`DEFAULT_RUNNER_NAME` / `DEFAULT_AGGREGATOR_NAME` 切到 `token_step` + `sum_score`（v3 后端只剩 token-mode runner / aggregator，留旧默认值会让新建节点保存即必炸）；`FORBIDDEN_DSL_KEYS` 收敛到 SSRF / 凭证 5 项
+- ✅ 新增 `components/token-source-list.tsx`：参考 `ensemble-aggregator/input-list.tsx` 做 InputList 行内表单（source_id / spec selector / weight 静态↔动态切换 / top_k_override / fallback_weight 仅在动态 weight 模式下出现）；删除 `components/model-selector.tsx` + `components/import-model-info-button.tsx`；保留 `runner-selector.tsx` / `aggregator-selector.tsx` / `diagnostics-config.tsx` / `dynamic-config-form.tsx`
+- ✅ `use-config.ts` / `panel.tsx` 重构：去掉 `useLocalModels` + 模型能力静态校验（spec 在变量池运行时解析，能力检查移到后端 §9 startup pipeline）；新增 7 个 handler；`filterSpecVar` 同时检查 selector 形态（`tail === 'spec'`）和类型（object / any），普通对象变量（如 `http_request.body`）在编辑期就被拒；`validationIssues` 加 registry membership 校验（`runnerNotRegistered` / `aggregatorNotRegistered`）+ scope match
+- ✅ `default.ts::checkValid` 全量翻新：替换 `question_variable` + `model_aliases` 校验为 `token_sources` 全套（min_length / source_id 唯一 / selector ≥ 2 段 / weight finite > 0 / top_k_override 正整数 / fallback_weight finite > 0）；token_step runner 强制 ≥ 2 sources
+- ✅ i18n（en-US + zh-Hans）：删 `models*` / `questionVariable*` / `importModelInfo*` / `modelCount*`；新增 `tokenSources.{title,tooltip,addSource,sourceIdPlaceholder,weight,weightModeNumber,weightModeVariable,weightToggleAria,topKOverride,topKOverrideTooltip,topKOverridePlaceholder,fallbackWeight,fallbackWeightTooltip,fallbackWeightPlaceholder}` + `sourceCount_*` + `errorMsg.{runnerNeedsTwoSources,tokenSourceMalformed,sourceIdRequired,duplicateSourceId,specSelectorRequired,weightSelectorMalformed,weightMustBePositive,topKOverrideInvalid,fallbackWeightInvalid}` + `parallelEnsemble.errors.{runnerNotRegistered,aggregatorNotRegistered}`；`outputVars.tokensCount` / `runnerTooltip` 改写为 token-mode-only（response-level 文案下线，附 ensemble-aggregator 引导）
+- ✅ 单测：新增 `components/__tests__/token-source-list.spec.tsx` 14 cases（路由 / 静态↔动态 weight 切换 / top_k_override clear / fallback 仅动态显示 / readonly）；`__tests__/panel.spec.tsx` 翻译到 `token-source-list` mock；`__tests__/requirements-validation.spec.tsx` 翻译 + 新增 6 cases（registry membership × 2 + filterSpecVar × 3 + scope match × 1）；删除 `model-selector.spec.tsx` / `import-button.spec.tsx`
+- ✅ 质量门：`pnpm exec tsc --noEmit` exit 0；`pnpm exec eslint app/components/workflow/nodes/parallel-ensemble` 0 errors / 1 warning（`react/no-array-index-key`，与 ensemble-aggregator 同款 acceptable）；`vitest run app/components/workflow/nodes/parallel-ensemble` **71 passed** / 7 files
 
 ### P3.B.5 parallel_ensemble 测试翻译 + 新增（1.5d）
 
