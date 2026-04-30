@@ -21,12 +21,13 @@ Why a synthetic ``_JudgeRunner`` instead of waiting for the real one
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The judge-style runner is documented in EXTENSIBILITY_SPEC §5.3 as the
-canonical example of cross-field validation but is not yet shipped in
-v0.2 (only ``token_step`` / ``response_level`` are). The TASKS.md P2.7
-list still requires the pattern to be tested so third-party authors
-know the SPI hook works as advertised; the synthetic runner here
-captures that contract without front-running the v0.3 judge runner's
-exact config shape.
+canonical example of cross-field validation but is not shipped in the
+box (post-ADR-v3-9 only ``token_step`` is registered; the response-mode
+runner moved out to the standalone ensemble-aggregator node). The
+TASKS.md P2.7 list still requires the pattern to be tested so
+third-party authors know the SPI hook works as advertised; the
+synthetic runner here captures that contract without front-running the
+v0.3 judge runner's exact config shape.
 """
 
 from __future__ import annotations

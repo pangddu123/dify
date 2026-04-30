@@ -1093,6 +1093,180 @@ class TestSpecResolution:
         assert exc.value.source_id == "s1"
         assert "sampling_params" in exc.value.reason
 
+    @pytest.mark.parametrize(
+        "bad_value",
+        ["string-not-dict", 42, [1, 2, 3], None],
+        ids=["string", "int", "list", "none"],
+    )
+    def test_invalid_spec_non_dict_resolved_value_raises(self, bad_value):
+        """``spec_selector`` resolving to a non-dict value (a stray int
+        in the variable pool, an upstream node that exposes the wrong
+        output shape, …) → :class:`InvalidSpecError` referencing the
+        source. ``MissingSpecError`` is reserved for genuinely-missing
+        selectors; a *present* but malformed value is a different bug
+        the user needs to see attributed to the right source."""
+        pool = VariablePool()
+        pool.add(["src_0", "spec"], _make_spec_dict(model_alias="m1"))
+        if bad_value is not None:
+            pool.add(["src_1", "spec"], bad_value)
+        # Where ``bad_value`` is None we deliberately leave src_1 unset
+        # so the run hits MissingSpecError, not InvalidSpecError. Skip
+        # those rows by branching the assertion.
+        node = _make_node(pool=pool, selectors=[["src_0", "spec"], ["src_1", "spec"]])
+        if bad_value is None:
+            with pytest.raises(MissingSpecError) as miss_exc:
+                list(node._run())
+            assert miss_exc.value.source_id == "s1"
+            return
+        with pytest.raises(InvalidSpecError) as exc:
+            list(node._run())
+        assert exc.value.source_id == "s1"
+        assert "expected dict" in exc.value.reason
+
+
+# ── Effective per-source TokenStepParams ─────────────────────────────────
+
+
+class TestEffectiveParams:
+    """``_build_effective_params`` merges
+    ``spec.sampling_params`` ⊕ ``TokenSourceRef.top_k_override`` per
+    source. Two invariants the node owns:
+
+    * ``top_k_override`` (consumer-vocab) wins on ``top_k``; every other
+      sampling knob (temperature / top_p / stop / seed / max_tokens)
+      rides through from the upstream spec exactly as the
+      ``token-model-source`` node produced it.
+    * Each source gets its *own* frozen ``TokenStepParams`` instance —
+      sibling sources sharing one params reference would let a
+      misbehaving backend bleed sampling state across the fan-out.
+
+    These tests capture ``sources[sid]["params"]`` from inside a
+    synthetic runner so the assertion sees the exact instance the real
+    runner would call ``backend.step_token(prompt, params)`` with;
+    they're the structural sibling of ``TestStartupValidation::test_top_k_override_drives_per_source_requirement``,
+    which only exercises the override via the §9 capability cap.
+    """
+
+    @staticmethod
+    def _make_capturing_runner(
+        captured: dict[str, Any],
+        runner_name: str = "_capturing_params",
+    ) -> type[EnsembleRunner]:
+        class _CapturingRunner(EnsembleRunner[_ScriptedConfig]):
+            name = runner_name
+            config_class: ClassVar[type[BaseModel]] = _ScriptedConfig
+            aggregator_scope: ClassVar[str] = "response"
+            required_capabilities: ClassVar[frozenset[Capability]] = frozenset()
+            i18n_key_prefix: ClassVar[str] = "test.capturingParams"
+            ui_schema: ClassVar[dict] = {}
+
+            def __init__(self, executor: ThreadPoolExecutor, aggregator_config: BaseModel) -> None:
+                del executor, aggregator_config
+
+            @classmethod
+            def requirements(cls, config: _ScriptedConfig) -> list[Requirement]:
+                del config
+                return []
+
+            def run(
+                self,
+                sources: dict[str, SourceInput],
+                backends: dict[str, ModelBackend],
+                aggregator: Aggregator,
+                config: _ScriptedConfig,
+                trace: TraceCollector,
+            ) -> Iterator[RunnerEvent]:
+                del backends, aggregator, config, trace
+                for sid, src in sources.items():
+                    captured[sid] = src["params"]
+                yield DoneEvent(kind="done", text="ok", metadata={})
+
+        return _CapturingRunner
+
+    def test_top_k_override_wins_over_spec_top_k(self):
+        """``ref.top_k_override = 25`` shadows ``spec.sampling_params.top_k = 5``
+        for source ``s0``; sibling ``s1`` (no override) keeps the spec's
+        own value. Pins ADR-v3-6 at the params layer — the §9 cap test
+        only sees the side-effect via ``backend.validate_requirements``
+        and would still pass if the merge wrote the *spec* value to the
+        params (with the override echoed elsewhere)."""
+        captured: dict[str, Any] = {}
+        runner = self._make_capturing_runner(captured)
+        node = _make_node(
+            runner_name="_capturing_params",
+            runners={"_capturing_params": runner},
+            sampling_params={"top_k": 5},
+            token_source_overrides=[{"top_k_override": 25}, {}],
+        )
+        list(node._run())
+        assert captured["s0"].top_k == 25
+        assert captured["s1"].top_k == 5
+
+    def test_per_source_sampling_reaches_backend(self):
+        """Every sampling knob on the upstream spec (temperature /
+        top_p / stop / seed) lands on the per-source ``TokenStepParams``
+        unchanged — the runner can hand the params straight to
+        ``backend.step_token`` without rebuilding.
+
+        Two sources with *different* spec sampling exercise the
+        per-source isolation: the merge cannot write s0's params into
+        s1's slot, even when both come from the same call to
+        ``_build_effective_params`` (frozen pydantic models would surface
+        cross-source aliasing as a sampling-leak in the assertion).
+        """
+        captured: dict[str, Any] = {}
+        runner = self._make_capturing_runner(captured, runner_name="_capturing_isolation")
+        pool = VariablePool()
+        pool.add(
+            ["src_0", "spec"],
+            _make_spec_dict(
+                model_alias="m1",
+                sampling_params={
+                    "top_k": 5,
+                    "temperature": 0.7,
+                    "top_p": 0.9,
+                    "stop": ["</s>"],
+                    "seed": 42,
+                },
+            ),
+        )
+        pool.add(
+            ["src_1", "spec"],
+            _make_spec_dict(
+                model_alias="m2",
+                sampling_params={
+                    "top_k": 3,
+                    "temperature": 1.5,
+                    "top_p": 0.5,
+                    "stop": ["END"],
+                    "seed": 99,
+                },
+            ),
+        )
+        node = _make_node(
+            pool=pool,
+            selectors=[["src_0", "spec"], ["src_1", "spec"]],
+            runner_name="_capturing_isolation",
+            runners={"_capturing_isolation": runner},
+        )
+        list(node._run())
+        # s0 carries its spec's full sampling row.
+        assert captured["s0"].top_k == 5
+        assert captured["s0"].temperature == 0.7
+        assert captured["s0"].top_p == 0.9
+        assert captured["s0"].stop == ("</s>",)
+        assert captured["s0"].seed == 42
+        # s1 carries its own — distinct from s0.
+        assert captured["s1"].top_k == 3
+        assert captured["s1"].temperature == 1.5
+        assert captured["s1"].top_p == 0.5
+        assert captured["s1"].stop == ("END",)
+        assert captured["s1"].seed == 99
+        # ``stop`` is the easy aliasing canary: the merge coerces list
+        # → tuple, so a shared params reference would surface as
+        # ``s0.stop == s1.stop`` here.
+        assert captured["s0"] is not captured["s1"]
+
 
 # ── Backend-private extras routing ───────────────────────────────────────
 
@@ -1282,6 +1456,51 @@ class TestWeightResolution:
             list(node._run())
         assert exc.value.source_id == "s0"
         assert "must be > 0" in exc.value.reason
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        [float("nan"), float("inf"), float("-inf")],
+        ids=["nan", "+inf", "-inf"],
+    )
+    def test_dynamic_weight_non_finite_rejected(self, bad_value):
+        """``isinstance(value, (int, float))`` would let NaN / ±Infinity
+        through the type check, but the weighted-sum tally needs finite
+        floats — NaN poisons every aggregate, ±Infinity dominates
+        sibling votes regardless of their probabilities. The resolver
+        rejects via ``math.isfinite`` *before* the ``> 0`` guard so the
+        error message correctly attributes the failure to "not finite"
+        (a NaN < 0 comparison is False, so a misordered guard would
+        silently send the value through the wrong rejection branch)."""
+        pool, selectors = _build_pool(["m1", "m2"])
+        pool.add(["weights", "bad"], bad_value)
+        node = _make_node(
+            pool=pool,
+            selectors=selectors,
+            token_source_overrides=[{"weight": ["weights", "bad"]}, {}],
+        )
+        with pytest.raises(WeightResolutionError) as exc:
+            list(node._run())
+        assert exc.value.source_id == "s0"
+        assert "not finite" in exc.value.reason
+
+    def test_dynamic_weight_non_finite_falls_back(self):
+        """ADR-v3-15: a non-finite resolved weight + ``fallback_weight``
+        opted-in degrades to the fallback rather than fail-fast — same
+        graceful-degrade contract as the missing-variable branch."""
+        pool, selectors = _build_pool(["m1", "m2"])
+        pool.add(["weights", "bad"], float("nan"))
+        _ScriptedRunner.scripted_events = [DoneEvent(kind="done", text="ok", metadata={})]
+        node = _make_node(
+            pool=pool,
+            selectors=selectors,
+            token_source_overrides=[
+                {"weight": ["weights", "bad"], "fallback_weight": 0.5},
+                {},
+            ],
+        )
+        events = list(node._run())
+        nrr = events[-1].node_run_result
+        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
 
 
 # ── DSL smuggle defence ──────────────────────────────────────────────────
