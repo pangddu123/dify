@@ -17,7 +17,6 @@ from core.workflow.nodes.ensemble_aggregator.exceptions import (
     WeightResolutionError,
 )
 from graphon.enums import WorkflowNodeExecutionStatus
-from graphon.node_events.node import StreamCompletedEvent
 from graphon.runtime.variable_pool import VariablePool
 
 
