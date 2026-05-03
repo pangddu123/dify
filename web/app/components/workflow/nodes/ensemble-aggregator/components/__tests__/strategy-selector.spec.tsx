@@ -96,7 +96,7 @@ const renderSelector = (overrides: Partial<Handlers> & {
   render(
     <StrategySelector
       readonly={overrides.readonly ?? false}
-      strategyName={overrides.strategyName ?? 'majority_vote'}
+      strategyName={overrides.strategyName ?? 'concat'}
       strategyConfig={overrides.strategyConfig ?? {}}
       {...handlers}
     />,
@@ -122,10 +122,8 @@ describe('ensemble-aggregator/strategy-selector', () => {
       )
     })
 
-    // All three strategies (majority_vote / concat / weighted_majority_vote)
-    // surface as menu items — guard against accidental literal
-    // narrowing on either side of the SPI.
-    it('lists all three strategies in the dropdown', () => {
+    // Voting strategies were removed; only the concat row remains.
+    it('lists the registered strategy in the dropdown', () => {
       renderSelector()
 
       fireEvent.click(screen.getByTestId('dropdown-trigger'))
@@ -134,31 +132,12 @@ describe('ensemble-aggregator/strategy-selector', () => {
       const rows = Array.from(
         content.querySelectorAll('[role="menuitem"]'),
       ) as HTMLElement[]
-      expect(rows).toHaveLength(3)
-      const names = rows.map(r => r.textContent ?? '').join(' ')
-      expect(names).toMatch(/strategies\.majority_vote\.label/)
-      expect(names).toMatch(/strategies\.concat\.label/)
-      expect(names).toMatch(/strategies\.weighted_majority_vote\.label/)
+      expect(rows).toHaveLength(1)
+      expect(rows[0].textContent ?? '').toMatch(/strategies\.concat\.label/)
     })
   })
 
   describe('Selection mutation', () => {
-    // Selecting a different strategy fires the parent handler with
-    // the new literal — a subsequent re-render with the new name
-    // would swap the trigger label.
-    it('fires onStrategyChange when picking a different strategy', () => {
-      const onStrategyChange = vi.fn<(name: EnsembleStrategyName) => void>()
-      renderSelector({ strategyName: 'majority_vote', onStrategyChange })
-
-      fireEvent.click(screen.getByTestId('dropdown-trigger'))
-      const content = screen.getByTestId('dropdown-content')
-      const concatRow = (Array.from(content.querySelectorAll('[role="menuitem"]')) as HTMLElement[])
-        .find(r => /strategies\.concat\.label/.test(r.textContent ?? ''))!
-      fireEvent.click(concatRow)
-
-      expect(onStrategyChange).toHaveBeenCalledWith('concat')
-    })
-
     // Re-selecting the active strategy is a no-op so a stray click
     // doesn't reset accumulated strategy_config (e.g. wipe a
     // separator the operator already typed).
@@ -182,30 +161,6 @@ describe('ensemble-aggregator/strategy-selector', () => {
   })
 
   describe('Schema reflection', () => {
-    // ``majority_vote`` ships with an empty ui_schema and renders a
-    // hint sentence rather than a config form — the form would be
-    // empty otherwise.
-    it('renders the hint text for strategies without a ui_schema', () => {
-      renderSelector({ strategyName: 'majority_vote' })
-
-      expect(
-        screen.getByText(/strategies\.majority_vote\.hint/),
-      ).toBeInTheDocument()
-      expect(screen.queryByTestId('dynamic-form')).toBeNull()
-    })
-
-    // ``weighted_majority_vote`` is the SPI extension example — also
-    // empty ui_schema, also renders a hint (regression vs. the
-    // earlier two-strategy literal).
-    it('renders the hint text for weighted_majority_vote', () => {
-      renderSelector({ strategyName: 'weighted_majority_vote' })
-
-      expect(
-        screen.getByText(/strategies\.weighted_majority_vote\.hint/),
-      ).toBeInTheDocument()
-      expect(screen.queryByTestId('dynamic-form')).toBeNull()
-    })
-
     // ``concat`` exposes three keys in ui_schema; the dynamic form
     // receives the same keys + the strategy's i18n_key_prefix so the
     // shared field renderer resolves labels under that namespace.

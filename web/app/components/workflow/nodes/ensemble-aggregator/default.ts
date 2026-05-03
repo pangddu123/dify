@@ -20,9 +20,7 @@ const metaData = genNodeMetaData({
 // Without this, a DSL import with a stray key passes the frontend and
 // only fails at run time inside ``StrategyConfigError``.
 const ALLOWED_KEYS_BY_STRATEGY: Record<EnsembleStrategyName, readonly string[]> = {
-  majority_vote: [],
   concat: ['separator', 'include_source_label', 'order_by_weight'],
-  weighted_majority_vote: [],
 }
 
 const isFiniteNumber = (v: unknown): v is number =>
@@ -44,7 +42,7 @@ const nodeDefault: NodeDefault<EnsembleAggregatorNodeType> = {
   metaData,
   defaultValue: {
     inputs: [],
-    strategy_name: 'majority_vote',
+    strategy_name: 'concat',
     strategy_config: {},
   },
   checkValid(payload: EnsembleAggregatorNodeType, t: (key: string, options?: Record<string, unknown>) => string) {

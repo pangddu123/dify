@@ -17,7 +17,9 @@ class AggregationInputRef(BaseModel):
     weight: float | list[str] = 1.0
     """Static float (per-source weight) OR a ``VariableSelector``-shaped
     ``list[str]`` (resolved at runtime against the variable pool, ADR-v3-15).
-    Default ``1.0`` keeps v2.4 unweighted majority-vote behaviour intact.
+    Default ``1.0`` keeps inputs neutral relative to peers — ``concat``'s
+    ``order_by_weight`` flag treats unit weights as a tie and preserves
+    declared input order.
 
     A ``list[str]`` here MUST have ≥ 2 segments — same shape as
     ``variable_selector`` — so the runtime resolver can read it via
@@ -47,7 +49,7 @@ class AggregationInputRef(BaseModel):
         # (default.ts) compares trimmed values, but the uniqueness guard on
         # this model runs against the raw value — without normalization,
         # `"model_a"` and `"model_a "` would survive as distinct keys in
-        # `metadata.contributions` and diverge majority_vote tie-break.
+        # `metadata.contributions`.
         return stripped
 
     @field_validator("variable_selector")
@@ -129,7 +131,7 @@ class EnsembleAggregatorNodeData(BaseNodeData):
     type: NodeType = ENSEMBLE_AGGREGATOR_NODE_TYPE
 
     inputs: list[AggregationInputRef] = Field(..., min_length=2)
-    strategy_name: Literal["majority_vote", "concat", "weighted_majority_vote"] = "majority_vote"
+    strategy_name: Literal["concat"] = "concat"
     strategy_config: dict[str, object] = Field(default_factory=dict)
 
     @model_validator(mode="after")
