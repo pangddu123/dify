@@ -3,13 +3,12 @@ app:
 
 
     Three LLMs independently classify the sentiment of the input `query` as
-    positive / negative / neutral. The ensemble-aggregator then picks the
-    majority vote and exposes it as `text`; End outputs `label`.
+    positive / negative / neutral. The Response Aggregator then concatenates
+    their outputs and exposes them as `text`; End outputs `label`.
 
 
-    Swap `strategy_name` to `concat` (and clear `strategy_config` or set
-    `separator` / `include_source_label`) to test the concat strategy on the
-    same graph.'
+    Tweak `strategy_config` (e.g. `separator`, `include_source_label`,
+    `order_by_weight`) to control how the three answers are stitched together.'
   icon: 🤝
   icon_background: '#E0E7FF'
   mode: workflow
@@ -292,8 +291,8 @@ workflow:
       type: custom
       width: 244
     - data:
-        desc: Majority vote across the three classifier LLMs. Ties are broken
-          deterministically by lexicographic order on `source_id`.
+        desc: Concatenate the three classifier outputs into a single labelled
+          response.
         inputs:
         - source_id: model_a
           variable_selector:
@@ -308,9 +307,10 @@ workflow:
           - llm_c
           - text
         selected: false
-        strategy_config: {}
-        strategy_name: majority_vote
-        title: Ensemble Aggregator
+        strategy_config:
+          include_source_label: true
+        strategy_name: concat
+        title: Response Aggregator
         type: ensemble-aggregator
       height: 150
       id: aggregator
@@ -326,7 +326,7 @@ workflow:
       type: custom
       width: 244
     - data:
-        desc: Emit the majority-voted sentiment label.
+        desc: Emit the concatenated sentiment labels.
         outputs:
         - value_selector:
           - aggregator

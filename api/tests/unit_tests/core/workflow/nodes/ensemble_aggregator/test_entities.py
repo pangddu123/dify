@@ -164,7 +164,7 @@ class TestAggregationInputRef:
     def test_source_id_leading_trailing_whitespace_is_stripped(self):
         # Frontend dedup (default.ts) compares trimmed values — backend
         # must normalize too, otherwise `"model_a"` and `"model_a "` survive
-        # as distinct contributions/keys and break majority_vote tie-break.
+        # as distinct contributions/keys.
         ref = AggregationInputRef(
             source_id="  gpt4  ",
             variable_selector=["node_a", "text"],
@@ -183,7 +183,7 @@ class TestEnsembleAggregatorNodeData:
     def test_defaults_applied(self):
         data = EnsembleAggregatorNodeData(inputs=self._valid_inputs())
         assert data.type == ENSEMBLE_AGGREGATOR_NODE_TYPE
-        assert data.strategy_name == "majority_vote"
+        assert data.strategy_name == "concat"
         assert data.strategy_config == {}
 
     def test_inputs_too_few_rejected(self):
@@ -231,10 +231,10 @@ class TestEnsembleAggregatorNodeData:
                 strategy_name="unknown_strategy",  # type: ignore[arg-type]
             )
 
-    def test_weighted_majority_vote_strategy_accepted(self):
-        # v3 added strategy literal — guard against accidental removal.
-        data = EnsembleAggregatorNodeData(
-            inputs=self._valid_inputs(),
-            strategy_name="weighted_majority_vote",
-        )
-        assert data.strategy_name == "weighted_majority_vote"
+    def test_majority_vote_strategy_rejected(self):
+        # Voting strategies were removed; the literal must not accept them.
+        with pytest.raises(ValidationError):
+            EnsembleAggregatorNodeData(
+                inputs=self._valid_inputs(),
+                strategy_name="majority_vote",  # type: ignore[arg-type]
+            )

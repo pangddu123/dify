@@ -57,8 +57,8 @@ const StrategySelector: FC<Props> = ({
   // ADR-v3-9). When non-empty, render via the shared
   // ``DynamicConfigForm`` so the form is reflective — adding a new
   // strategy with ``ui_schema`` declarations gets a working panel
-  // without touching this file. Empty schemas (e.g. ``majority_vote`` /
-  // ``weighted_majority_vote``) render a hint only.
+  // without touching this file. Strategies with empty ui_schema
+  // render a hint only.
   const hasSchema = meta && Object.keys(meta.ui_schema).length > 0
 
   return (

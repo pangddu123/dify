@@ -69,10 +69,9 @@ const useConfig = (id: string, payload: EnsembleAggregatorNodeType) => {
       draft.inputs.push({
         source_id: nextDefaultSourceId(draft.inputs),
         variable_selector: [],
-        // ``1.0`` keeps v2.4 unweighted majority-vote behaviour intact —
-        // backend ``majority_vote`` collapses to plain integer counts
-        // when every weight is unit, so adding a fresh input never
-        // perturbs an existing all-unit ensemble.
+        // ``1.0`` keeps the input neutral relative to existing peers —
+        // ``concat``'s ``order_by_weight`` flag treats unit weights as
+        // a tie and preserves declared input order.
         weight: 1,
         // ``null`` = fail-fast on dynamic weight resolution failure
         // (ADR-v3-15). Operators opt into graceful degrade explicitly.

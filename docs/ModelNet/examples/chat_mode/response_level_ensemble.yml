@@ -3,13 +3,13 @@ app:
 
 
     Three LLMs answer the same user query (`{{#sys.query#}}`) from different
-    perspectives (concise / creative / step-by-step). The ensemble-aggregator
+    perspectives (concise / creative / step-by-step). The Response Aggregator
     concatenates their outputs (with per-source labels) and the Answer node
     streams the merged text to the chat UI.
 
 
-    Switch `strategy_name` to `majority_vote` to experiment with vote-based
-    aggregation on the same graph (short-answer prompts work best there).'
+    Tweak `strategy_config` (e.g. `separator`, `order_by_weight`) to control
+    how the three perspectives are stitched together.'
   icon: 🤝
   icon_background: '#E0E7FF'
   mode: advanced-chat
@@ -326,7 +326,7 @@ workflow:
         strategy_config:
           include_source_label: true
         strategy_name: concat
-        title: Ensemble Aggregator
+        title: Response Aggregator
         type: ensemble-aggregator
       height: 150
       id: aggregator

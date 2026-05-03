@@ -3,15 +3,10 @@ import type { CommonNodeType, ValueSelector } from '@/app/components/workflow/ty
 
 export const ENSEMBLE_AGGREGATOR_NODE_TYPE = 'ensemble-aggregator' as const
 
-export type EnsembleStrategyName
-  = | 'majority_vote'
-    | 'concat'
-    | 'weighted_majority_vote'
+export type EnsembleStrategyName = 'concat'
 
 export const ENSEMBLE_STRATEGY_NAMES: EnsembleStrategyName[] = [
-  'majority_vote',
   'concat',
-  'weighted_majority_vote',
 ]
 
 // Mirrors backend ``concat._ConcatConfig`` (api/core/workflow/nodes/
@@ -51,11 +46,6 @@ export const ENSEMBLE_STRATEGY_META: Record<
   EnsembleStrategyName,
   EnsembleStrategyMeta
 > = {
-  majority_vote: {
-    name: 'majority_vote',
-    i18n_key_prefix: 'nodes.ensembleAggregator.majorityVote',
-    ui_schema: {},
-  },
   concat: {
     name: 'concat',
     i18n_key_prefix: 'nodes.ensembleAggregator.concat',
@@ -64,11 +54,6 @@ export const ENSEMBLE_STRATEGY_META: Record<
       include_source_label: { control: 'switch' },
       order_by_weight: { control: 'switch' },
     },
-  },
-  weighted_majority_vote: {
-    name: 'weighted_majority_vote',
-    i18n_key_prefix: 'nodes.ensembleAggregator.weightedMajorityVote',
-    ui_schema: {},
   },
 }
 

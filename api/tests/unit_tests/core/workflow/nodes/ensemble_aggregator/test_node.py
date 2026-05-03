@@ -136,7 +136,7 @@ class TestExtractVariableSelectorMapping:
             "data": {
                 "title": "agg",
                 "inputs": inputs_payload,
-                "strategy_name": "majority_vote",
+                "strategy_name": "concat",
                 "strategy_config": {},
             },
         }
@@ -226,32 +226,6 @@ class TestRunHappyPath:
             "strategy_config": strategy_config or {},
         }
 
-    def test_majority_vote_succeeds_with_expected_outputs(self):
-        pool = self._three_text_pool({"llm_a": "A", "llm_b": "A", "llm_c": "B"})
-        node = _make_node(pool, self._node_data("majority_vote"))
-
-        events = list(node._run())
-
-        assert len(events) == 1
-        assert isinstance(events[0], StreamCompletedEvent)
-        nrr = events[0].node_run_result
-        assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
-        assert nrr.error == ""
-
-        assert nrr.outputs["text"] == "A"
-        metadata = nrr.outputs["metadata"]
-        assert metadata["strategy"] == "majority_vote"
-        assert metadata["votes"] == {"A": 2, "B": 1}
-        assert metadata["winner_votes"] == 2
-        assert metadata["tie_break_applied"] is False
-        assert metadata["contributions"] == {
-            "gpt4": "A",
-            "claude": "A",
-            "llama": "B",
-        }
-
-        assert nrr.inputs == {"source_count": 3, "strategy": "majority_vote"}
-
     def test_concat_default_separator(self):
         pool = self._three_text_pool(
             {"llm_a": "first", "llm_b": "second", "llm_c": "third"}
@@ -319,7 +293,7 @@ class TestRunFailurePaths:
         pool = VariablePool()
         pool.add(["llm_a", "text"], "only-a-present")
         # llm_b deliberately not added.
-        node = _make_node(pool, self._two_inputs_payload("majority_vote"))
+        node = _make_node(pool, self._two_inputs_payload("concat"))
 
         events = list(node._run())
 
@@ -329,7 +303,7 @@ class TestRunFailurePaths:
         assert nrr.error_type == "MissingInputError"
         assert "llm_b" in nrr.error or "'b'" in nrr.error
         # inputs metadata still populated for observability of the failed run.
-        assert nrr.inputs == {"source_count": 2, "strategy": "majority_vote"}
+        assert nrr.inputs == {"source_count": 2, "strategy": "concat"}
         # Outputs not set on failure.
         assert nrr.outputs == {}
 
@@ -337,11 +311,11 @@ class TestRunFailurePaths:
         pool = VariablePool()
         pool.add(["llm_a", "text"], "x")
         pool.add(["llm_b", "text"], "y")
-        # `bogus` is rejected by MajorityVoteStrategy's extra="forbid" config.
+        # `bogus` is rejected by ConcatStrategy's extra="forbid" config.
         node = _make_node(
             pool,
             self._two_inputs_payload(
-                "majority_vote", {"bogus": 42}
+                "concat", {"bogus": 42}
             ),
         )
 
@@ -351,7 +325,7 @@ class TestRunFailurePaths:
         nrr = events[0].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.FAILED
         assert nrr.error_type == "StrategyConfigError"
-        assert "majority_vote" in nrr.error
+        assert "concat" in nrr.error
 
     def test_strategy_not_found_defense_in_depth(self):
         """Pydantic Literal normally rejects unknown strategy_name at schema
@@ -363,7 +337,7 @@ class TestRunFailurePaths:
         pool = VariablePool()
         pool.add(["llm_a", "text"], "x")
         pool.add(["llm_b", "text"], "y")
-        node = _make_node(pool, self._two_inputs_payload("majority_vote"))
+        node = _make_node(pool, self._two_inputs_payload("concat"))
         # Simulate registry/schema drift.
         node._node_data.strategy_name = "never_registered"  # type: ignore[assignment]
 
@@ -422,7 +396,7 @@ class TestDynamicWeightResolution:
                     "weight": weight_b,
                 },
             ],
-            "strategy_name": "weighted_majority_vote",
+            "strategy_name": "concat",
             "strategy_config": {},
         }
 
@@ -431,12 +405,14 @@ class TestDynamicWeightResolution:
         payload = self._payload(weight_a=["weights_node", "m1"])
         node = _make_node(pool, payload)
 
+        # `_collect_inputs` is the seam that resolves dynamic weights.
+        _, weights, _, fallbacks = node._collect_inputs()
+        assert weights == {"m1": 3.0, "m2": 1.0}
+        assert fallbacks == []
+
         events = list(node._run())
         nrr = events[0].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
-        # m1 weight 3.0 + m2 weight 1.0; both vote 'A' → A:4.0
-        assert nrr.outputs["metadata"]["scores"] == {"A": 4.0}
-        assert nrr.outputs["metadata"]["weights"] == {"m1": 3.0, "m2": 1.0}
         # No fallbacks used → process_data stays empty.
         assert nrr.process_data == {}
 
@@ -452,7 +428,7 @@ class TestDynamicWeightResolution:
         assert nrr.error_type == "WeightResolutionError"
         assert "m1" in nrr.error
         # 'inputs' metadata still records strategy + count for observability.
-        assert nrr.inputs["strategy"] == "weighted_majority_vote"
+        assert nrr.inputs["strategy"] == "concat"
 
     def test_dynamic_weight_non_numeric_fail_fast(self):
         # Selector resolves but value is a string — must escalate, not silently coerce.
@@ -488,10 +464,14 @@ class TestDynamicWeightResolution:
         )
         node = _make_node(pool, payload)
 
+        # Verify the fallback resolved to the expected numeric.
+        _, weights, _, fallbacks = node._collect_inputs()
+        assert weights == {"m1": 0.5, "m2": 2.0}
+        assert [fb["source_id"] for fb in fallbacks] == ["m1"]
+
         events = list(node._run())
         nrr = events[0].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
-        assert nrr.outputs["metadata"]["weights"] == {"m1": 0.5, "m2": 2.0}
         # ``inputs`` stays clean — fallback warnings are not "inputs".
         assert "weight_fallbacks" not in nrr.inputs
         assert "weight_fallback_warnings" not in nrr.inputs
@@ -512,11 +492,13 @@ class TestDynamicWeightResolution:
         payload = self._payload(weight_a=2.0, weight_b=1.0)
         node = _make_node(pool, payload)
 
+        # Static numeric path doesn't touch the pool.
+        _, weights, _, _ = node._collect_inputs()
+        assert weights == {"m1": 2.0, "m2": 1.0}
+
         events = list(node._run())
         nrr = events[0].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
-        # m1 weight 2.0 + m2 weight 1.0; both 'A' → A:3.0
-        assert nrr.outputs["metadata"]["weights"] == {"m1": 2.0, "m2": 1.0}
 
     def test_dynamic_weight_none_value_fail_fast(self):
         # Pool has the selector key, but the stored value is None — the
@@ -590,10 +572,12 @@ class TestDynamicWeightResolution:
         )
         node = _make_node(pool, payload)
 
+        _, weights, _, _ = node._collect_inputs()
+        assert weights == {"m1": 0.25, "m2": 1.0}
+
         events = list(node._run())
         nrr = events[0].node_run_result
         assert nrr.status == WorkflowNodeExecutionStatus.SUCCEEDED
-        assert nrr.outputs["metadata"]["weights"] == {"m1": 0.25, "m2": 1.0}
         warnings = nrr.process_data["weight_fallback_warnings"]
         assert len(warnings) == 1
         assert warnings[0]["source_id"] == "m1"
@@ -625,10 +609,13 @@ class TestDynamicWeightResolution:
                     "fallback_weight": 0.4,
                 },
             ],
-            "strategy_name": "weighted_majority_vote",
+            "strategy_name": "concat",
             "strategy_config": {},
         }
         node = _make_node(pool, payload)
+
+        _, weights, _, _ = node._collect_inputs()
+        assert weights == {"m1": 0.6, "m2": 0.4}
 
         events = list(node._run())
         nrr = events[0].node_run_result
@@ -636,7 +623,6 @@ class TestDynamicWeightResolution:
         warnings = nrr.process_data["weight_fallback_warnings"]
         assert [w["source_id"] for w in warnings] == ["m1", "m2"]
         assert [w["fallback_weight"] for w in warnings] == [0.6, 0.4]
-        assert nrr.outputs["metadata"]["weights"] == {"m1": 0.6, "m2": 0.4}
 
 
 class TestExtraSourceMeta:
@@ -663,7 +649,7 @@ class TestExtraSourceMeta:
                         "variable_selector": ["llm_b", "text"],
                     },
                 ],
-                "strategy_name": "majority_vote",
+                "strategy_name": "concat",
                 "strategy_config": {},
             },
         )
@@ -692,7 +678,7 @@ class TestExtractMappingExposesDynamicWeight:
                         # Static weight → no extra mapping entry.
                     },
                 ],
-                "strategy_name": "weighted_majority_vote",
+                "strategy_name": "concat",
                 "strategy_config": {},
             },
         }
