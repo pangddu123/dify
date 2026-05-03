@@ -1,5 +1,5 @@
 # base image
-FROM python:3.12-slim-bookworm AS base
+FROM docker.1ms.run/library/python:3.12-slim-bookworm AS base
 
 WORKDIR /app/api
 
