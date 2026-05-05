@@ -254,3 +254,4 @@ scripts/stress-test/reports/
 # ModelNet model registry — real file holds internal URLs and must not
 # enter git; use api/configs/model_net.yaml.example as a template.
 api/configs/model_net.yaml
+docs/ModelNet/Token-Level Collaborative Reasoning for Parallel Multi-Models.pdf
