@@ -56,7 +56,7 @@ export enum BlockEnum {
   TriggerSchedule = 'trigger-schedule',
   TriggerWebhook = 'trigger-webhook',
   TriggerPlugin = 'trigger-plugin',
-  EnsembleAggregator = 'ensemble-aggregator',
+  ResponseAggregator = 'response-aggregator',
   ParallelEnsemble = 'parallel-ensemble',
   TokenModelSource = 'token-model-source',
 }

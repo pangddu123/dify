@@ -253,7 +253,7 @@ const useConfig = (id: string, payload: ParallelEnsembleNodeType) => {
         draft.ensemble.runner_name = runner.name
         // Reset runner_config — the previous runner's fields are
         // rejected by the new runner's ``extra="forbid"`` validator.
-        // Same pattern ensemble-aggregator's strategy switch uses.
+        // Same pattern response-aggregator's strategy switch uses.
         draft.ensemble.runner_config = {}
         // If the old aggregator's scope no longer matches the new
         // runner's scope, drop it — leaving a stale aggregator name

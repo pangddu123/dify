@@ -449,7 +449,7 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
             sampling_clean = {k: v for k, v in sampling_raw.items() if v is not None or k == "seed"}
             # Backend-private extras: spec.extra is the producer-vocab
             # default, ref.extra wins on key collision (consumer-vocab
-            # gets the last word — same precedence ensemble_aggregator
+            # gets the last word — same precedence response_aggregator
             # uses for its source-level overrides).
             spec_extra = spec.get("extra")
             spec_extra_dict: dict[str, Any] = dict(spec_extra) if isinstance(spec_extra, dict) else {}
@@ -861,7 +861,7 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
         ``_collect_specs`` looks up the spec selectors. ``source_id`` is
         unique per node (entities-layer invariant), so
         ``{node_id}.token_sources.{source_id}`` is a stable unique key —
-        same shape as ``ensemble_aggregator``'s mapping for symmetry.
+        same shape as ``response_aggregator``'s mapping for symmetry.
         """
         del graph_config
         mapping: dict[str, Sequence[str]] = {}

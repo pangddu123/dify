@@ -124,7 +124,7 @@ export const BLOCKS = [
   },
   {
     classification: BlockClassificationEnum.Transform,
-    type: BlockEnum.EnsembleAggregator,
+    type: BlockEnum.ResponseAggregator,
     title: 'Response Aggregator',
   },
   {

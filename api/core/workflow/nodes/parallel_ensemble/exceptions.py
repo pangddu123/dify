@@ -2,7 +2,7 @@
 
 Lives one level above ``spi/`` so that backend / runner / aggregator
 modules can raise these without importing each other. Mirrors the
-two-tier shape of `ensemble_aggregator/exceptions.py` and
+two-tier shape of `response_aggregator/exceptions.py` and
 `llama_cpp/exceptions.py`: a single ``ParallelEnsembleError`` root for
 node-layer ``except`` blocks plus narrow subclasses that retain
 semantic fields (capability name, registry key, structured issues) so
@@ -90,7 +90,7 @@ class InvalidSpecError(ParallelEnsembleError):
 class WeightResolutionError(ParallelEnsembleError):
     """Raised when a dynamic ``TokenSourceRef.weight`` selector cannot resolve.
 
-    Mirrors ``ensemble_aggregator``'s same-named exception — the node
+    Mirrors ``response_aggregator``'s same-named exception — the node
     FAILs by default (ADR-v3-15 fail-fast); only when the user opts
     into a numeric ``fallback_weight`` does the node trace-warn and use
     the fallback instead.

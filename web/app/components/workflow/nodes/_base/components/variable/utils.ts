@@ -2205,7 +2205,7 @@ export const getNodeOutputVars = (
       break
     }
 
-    case BlockEnum.EnsembleAggregator: {
+    case BlockEnum.ResponseAggregator: {
       res.push([id, 'text'])
       res.push([id, 'metadata'])
       break

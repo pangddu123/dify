@@ -39,12 +39,12 @@ NodeType: TypeAlias = str
 ### 1.2 结论
 
 - **任意字符串都可以作为 `node_type`**，不需要扩展 `BuiltinNodeTypes`、不需要 fork graphon。
-- v2 计划里 `EnsembleAggregatorNodeData` 写法：
+- v2 计划里 `ResponseAggregatorNodeData` 写法：
   ```python
-  class EnsembleAggregatorNodeData(BaseNodeData):
-      type: NodeType = "ensemble-aggregator"   # 合法
+  class ResponseAggregatorNodeData(BaseNodeData):
+      type: NodeType = "response-aggregator"   # 合法
   ```
-  类型标注相当于 `type: str = "ensemble-aggregator"`，Pydantic 直接接受。
+  类型标注相当于 `type: str = "response-aggregator"`，Pydantic 直接接受。
 - 同理 `ParallelEnsembleNodeData.type = "parallel-ensemble"` 合法。
 
 ### 1.3 对 DEVELOPMENT_PLAN.md 的影响
@@ -52,7 +52,7 @@ NodeType: TypeAlias = str
 | 位置 | 原文 | 是否要改 |
 |---|---|---|
 | ADR-1 | 走 fork 路线 | 不改（结论一致） |
-| §5.3 entities.py 示例 | `type: NodeType = "ensemble-aggregator"   # ⚠️ Phase 0 Q1 验证后再确认` | **可删除 `⚠️ Phase 0 Q1 验证`注释** |
+| §5.3 entities.py 示例 | `type: NodeType = "response-aggregator"   # ⚠️ Phase 0 Q1 验证后再确认` | **可删除 `⚠️ Phase 0 Q1 验证`注释** |
 | §6.3 entities.py 示例 | 同上 | 同上 |
 | R1 "字符串注册新 node_type 不行" | open | **closed** |
 
@@ -100,20 +100,20 @@ class Node(Generic[NodeDataT]):
 
 ### 2.3 外部节点注册策略
 
-- 我们的节点模块路径是 `core.workflow.nodes.ensemble_aggregator.node` / `core.workflow.nodes.parallel_ensemble.node`，**不以 `graphon.nodes.` 开头** → 走 `bucket.setdefault` 分支。
-- 由于 `ensemble-aggregator` / `parallel-ensemble` 这两个 node_type **graphon 从未注册过**，`bucket` 为空，`setdefault` 等于直接写入 → 无冲突、无覆盖问题。
+- 我们的节点模块路径是 `core.workflow.nodes.response_aggregator.node` / `core.workflow.nodes.parallel_ensemble.node`，**不以 `graphon.nodes.` 开头** → 走 `bucket.setdefault` 分支。
+- 由于 `response-aggregator` / `parallel-ensemble` 这两个 node_type **graphon 从未注册过**，`bucket` 为空，`setdefault` 等于直接写入 → 无冲突、无覆盖问题。
 
 ### 2.4 新节点最小骨架
 
 ```python
-# api/core/workflow/nodes/ensemble_aggregator/node.py
+# api/core/workflow/nodes/response_aggregator/node.py
 from typing import ClassVar
 from graphon.nodes.base.node import Node
 from graphon.enums import NodeType
-from .entities import EnsembleAggregatorNodeData
+from .entities import ResponseAggregatorNodeData
 
-class EnsembleAggregatorNode(Node[EnsembleAggregatorNodeData]):
-    node_type: ClassVar[NodeType] = "ensemble-aggregator"
+class ResponseAggregatorNode(Node[ResponseAggregatorNodeData]):
+    node_type: ClassVar[NodeType] = "response-aggregator"
 
     @classmethod
     def version(cls) -> str:
@@ -123,7 +123,7 @@ class EnsembleAggregatorNode(Node[EnsembleAggregatorNodeData]):
         ...
 ```
 
-仅此 + `_run()` 就会在 `DifyNodeFactory.register_nodes()` 调用 `_import_node_package("core.workflow.nodes")` 时自动注册到 `Node._registry["ensemble-aggregator"]["1"]`。
+仅此 + `_run()` 就会在 `DifyNodeFactory.register_nodes()` 调用 `_import_node_package("core.workflow.nodes")` 时自动注册到 `Node._registry["response-aggregator"]["1"]`。
 
 ### 2.5 ⚠️ 误述更正：`self.id` vs `self._node_id`
 
@@ -197,7 +197,7 @@ return node_class(id=node_id, config=..., **node_init_kwargs)
 
 ### 3.2 聚合节点（Phase 1）
 
-`EnsembleAggregatorNode` 无外部依赖（从 `graph_runtime_state.variable_pool` 取上游，调聚合策略 pure function），**不在 factory 加任何分支**，走默认空 kwargs。这与 TASKS.md P1.3 的断言一致。
+`ResponseAggregatorNode` 无外部依赖（从 `graph_runtime_state.variable_pool` 取上游，调聚合策略 pure function），**不在 factory 加任何分支**，走默认空 kwargs。这与 TASKS.md P1.3 的断言一致。
 
 ### 3.3 Token 节点（Phase 2）
 
@@ -305,7 +305,7 @@ v2 计划 §6.0.4 在 `ModelSpec` 上用 `extra="forbid"` 拦截 DSL 里塞 `mod
 
 ### 必做（P0.3）
 
-- [ ] §5.3 `EnsembleAggregatorNodeData` 示例移除 `⚠️ Phase 0 Q1 验证后再确认` 注释
+- [ ] §5.3 `ResponseAggregatorNodeData` 示例移除 `⚠️ Phase 0 Q1 验证后再确认` 注释
 - [ ] §6.3 `ParallelEnsembleNodeData` 同上
 - [ ] §6.4 §6.7 "关键差异点提醒 2" 改写：`self.id` 与 `self._node_id` 值相等；**约定上**用 `self._node_id` 保持 graphon 源码一致性
 - [ ] §8 风险登记：R1 状态 `open → closed`（证据：Q1）

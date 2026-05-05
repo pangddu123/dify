@@ -15,7 +15,7 @@ v3 splits the aggregation context into two layers:
 P3.B.0 dropped the ``AggregationContext`` back-compat alias alongside
 the deletion of the response-mode runner / aggregators (ADR-v3-9). Token
 aggregators import ``BackendAggregationContext`` directly; response
-strategies live under ``ensemble_aggregator`` and only ever see
+strategies live under ``response_aggregator`` and only ever see
 ``SourceAggregationContext``.
 """
 
@@ -55,14 +55,14 @@ class SourceAggregationContext(BaseModel):
     response aggregators get whatever the upstream node calls each input."""
 
     weights: dict[str, float]
-    """``source_id`` → effective weight. ensemble_aggregator resolves
+    """``source_id`` → effective weight. response_aggregator resolves
     static / variable-bound weights into this dict before calling
     ``aggregate``; the token-mode ``TokenStepRunner`` resolves them from
     ``ModelBackend.weight`` (i.e. the underlying spec ``weight`` field)."""
 
     source_meta: dict[str, dict] = Field(default_factory=dict)
     """Per-source pass-through dict (``AggregationInputRef.extra`` for
-    ensemble_aggregator). Aggregators that want a "tag this source as
+    response_aggregator). Aggregators that want a "tag this source as
     high-confidence" channel read here."""
 
     strategy_config: dict = Field(default_factory=dict)

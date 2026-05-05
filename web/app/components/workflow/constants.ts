@@ -129,7 +129,7 @@ export const SUPPORT_OUTPUT_VARS_NODE = [
   BlockEnum.Agent,
   BlockEnum.DataSource,
   BlockEnum.HumanInput,
-  BlockEnum.EnsembleAggregator,
+  BlockEnum.ResponseAggregator,
   BlockEnum.ParallelEnsemble,
   BlockEnum.TokenModelSource,
 ]

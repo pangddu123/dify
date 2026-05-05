@@ -35,7 +35,7 @@ Why ``_make_node`` bypasses ``Node.__init__``
 ``Node.__init__`` requires a real ``GraphInitParams`` / ``GraphRuntimeState``
 which would pull a graph runtime, a workflow id, a run-context mapping,
 etc. — too much surface area for unit tests of one node. Mirroring
-``ensemble_aggregator/test_node.py``, we ``__new__`` the instance and
+``response_aggregator/test_node.py``, we ``__new__`` the instance and
 inject only the four attributes ``_run`` actually reads
 (``_node_id`` / ``graph_runtime_state`` / ``_node_data`` + the SPI
 keyword args the factory wires).
@@ -576,7 +576,7 @@ def _make_node(
 ) -> ParallelEnsembleNode:
     """Bypass ``Node.__init__`` and inject just the pieces ``_run`` reads.
 
-    Mirrors ``ensemble_aggregator/test_node.py::_make_node`` so the two
+    Mirrors ``response_aggregator/test_node.py::_make_node`` so the two
     suites read symmetrically. The caller supplies registries / specs;
     sensible defaults paint a 2-source scripted-runner setup that most
     tests can override one field of.
@@ -1336,7 +1336,7 @@ class TestExtraRouting:
 
     def test_ref_extra_overrides_spec_extra(self):
         """Both layers' extras merge with ref winning on key collision —
-        same precedence ``ensemble_aggregator`` uses for source-level
+        same precedence ``response_aggregator`` uses for source-level
         overrides. New keys from either side land additively."""
 
         captured: dict[str, Any] = {}

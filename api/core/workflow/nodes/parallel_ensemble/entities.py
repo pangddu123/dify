@@ -136,7 +136,7 @@ class TokenSourceRef(BaseModel):
     @field_validator("weight", mode="before")
     @classmethod
     def _weight_well_formed(cls, v: Any) -> float | list[str]:
-        # Same finite + non-bool guard as ensemble_aggregator's
+        # Same finite + non-bool guard as response_aggregator's
         # AggregationInputRef.weight: bool is an int subclass and would
         # silently coerce to 1.0/0.0; NaN/Inf would corrupt weighted-sum
         # tallying downstream.

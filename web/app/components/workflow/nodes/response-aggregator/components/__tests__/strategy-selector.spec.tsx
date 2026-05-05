@@ -133,7 +133,7 @@ describe('response-aggregator/strategy-selector', () => {
         content.querySelectorAll('[role="menuitem"]'),
       ) as HTMLElement[]
       expect(rows).toHaveLength(1)
-      expect(rows[0].textContent ?? '').toMatch(/strategies\.concat\.label/)
+      expect(rows[0]?.textContent ?? '').toMatch(/strategies\.concat\.label/)
     })
   })
 

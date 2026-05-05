@@ -99,7 +99,7 @@ class TokenModelSourceNode(Node[TokenModelSourceNodeData]):
         we additionally use ``Segment.text`` so ``NoneSegment``
         renders as ``""`` and ``ObjectSegment`` / ``ArrayStringSegment``
         render as JSON — matches the canonical renderer used by
-        ``ensemble_aggregator/node.py`` and the rest of graphon.
+        ``response_aggregator/node.py`` and the rest of graphon.
 
         Raises ``PromptRenderError`` when any selector fails to
         resolve so the node FAILs with a structured error instead of

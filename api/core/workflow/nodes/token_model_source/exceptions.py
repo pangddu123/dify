@@ -16,7 +16,7 @@ class TokenModelSourceNodeError(Exception):
     """Base for every runtime error this node raises.
 
     Mirrors the two-tier exception layout the v2.4 nodes use
-    (``EnsembleAggregatorNodeError`` etc.) so a higher-level handler
+    (``ResponseAggregatorNodeError`` etc.) so a higher-level handler
     can trap the whole family with one ``except``.
     """
 

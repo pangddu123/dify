@@ -45,9 +45,9 @@
 |---|---|---|
 | EP-1 | **三轴正交** | "怎么连模型" / "怎么跑协作" / "怎么合信号" 是三件独立的事，不要让任何一轴的扩展强迫其他两轴跟着改。 |
 | EP-2 | **Capability 粗过滤 + Requirements 精校验** | Capability 是"能不能做"的布尔位，仅作启动期粗筛（`token_step` 兼容 backend 列表）。具体上限（`top_k≤20`）、版本约束、模型支持矩阵走 `Requirements` 结构化校验，runner 按运行配置生成、backend 按 spec 校验，返回 typed errors。 |
-| EP-3 | **单一对外节点 = `parallel-ensemble`** | Dify 画布上只有一个 `parallel-ensemble` 节点（沿用 P2.1 已落地常量；不改名）。"协作模式"是节点配置项，不是节点类型——避免每加一种玩法就跑一遍 9 处前端注册。P1 的 `ensemble-aggregator` 节点保留作为 backwards-compat 着陆点不删，但**不**作为本规范的 fast path。 |
+| EP-3 | **单一对外节点 = `parallel-ensemble`** | Dify 画布上只有一个 `parallel-ensemble` 节点（沿用 P2.1 已落地常量；不改名）。"协作模式"是节点配置项，不是节点类型——避免每加一种玩法就跑一遍 9 处前端注册。P1 的 `response-aggregator` 节点保留作为 backwards-compat 着陆点不删，但**不**作为本规范的 fast path。 |
 | EP-4 | **安全边界 = DSL/前端 → 服务端，仅此一道** | ⚠️ 不要相信「Python 扩展是受沙箱保护的」。本规范不假设 Python 内进程隔离：第三方 runner / backend 是**受信代码**（与节点同进程，可反射、可 import 任何东西、可读 `__dict__`）。真正能挡住威胁的边界只有「DSL 与前端用户提交的字段」这一道——他们不能塞 url/key、不能在 `runner_config` 里偷渡敏感字段、`extra="forbid"` 在三层 schema 全开。要防恶意的第三方 Python 扩展，必须走进程隔离 / wasm / RPC 沙箱，超出 v0.1 范围。 |
-| EP-5 | **现有 P1 / P2.1 不重写，只升级** | `ensemble-aggregator` 节点和 `LocalModelRegistry` 已经落地——本规范是把它们"提升"成参考实现，不是推翻。 |
+| EP-5 | **现有 P1 / P2.1 不重写，只升级** | `response-aggregator` 节点和 `LocalModelRegistry` 已经落地——本规范是把它们"提升"成参考实现，不是推翻。 |
 | EP-6 | **Trace / Diagnostics 是一等数据面** | 用户原始诉求"想轻松获取 logit / 中间数据"决定了 trace 不是附属物。每条数据（token 候选、logits、per-model 输出、think 痕迹、耗时、错误）都通过 `diagnostics_config` 显式开关 + 标准化 `EnsembleTrace` schema 暴露，规模通过 `storage` 策略（v0.2: inline / metadata，v0.3 加 artifact）控制，不让 `outputs.text` 爆炸。 |
 
 ---
@@ -114,7 +114,7 @@ DSL { runner: "token_step",                  ┐
 
 > **v3 note (2026-04-29)**：`response_level` runner 在
 > `DEVELOPMENT_PLAN_v3.md` 中删除；response 模式统一走
-> `ensemble-aggregator` + `ResponseAggregator` SPI。下方 v0.2 的
+> `response-aggregator` + `ResponseAggregator` SPI。下方 v0.2 的
 > `response_level` 相关矩阵保留为历史上下文，token 模式后续按 v3 的
 > `token-model-source` + `parallel-ensemble` aggregator-as-executor 路径演进。
 
@@ -858,7 +858,7 @@ class EnsembleRunner(ABC, Generic[ConfigT]):
 > ui_schema / requirements / validate_selection / `trace` 参数 / dict-keyed
 > backends），二开者照抄会撞抽象方法未实现。v0.2.2 全部改成 v0.2 完整契约。
 
-#### 5.2.1 `response_level` —— 包装 P1 ensemble-aggregator
+#### 5.2.1 `response_level` —— 包装 P1 response-aggregator
 
 ```python
 class ResponseLevelConfig(BaseModel):
@@ -1508,7 +1508,7 @@ api/core/workflow/nodes/parallel_ensemble/
 ```
 
 `pkgutil.walk_packages` 在 `_import_node_package` 里递归扫，所有 `@register_*`
-装饰器自动生效；P1 `ensemble-aggregator` 节点保留为「响应级专用 fast path」
+装饰器自动生效；P1 `response-aggregator` 节点保留为「响应级专用 fast path」
 **不删**——它是 backwards-compat 的着陆点，研究者可以渐进式迁移。
 
 ---
@@ -1531,7 +1531,7 @@ api/core/workflow/nodes/parallel_ensemble/
 | P2.4 控制台 API | 返回 `BackendInfo`（含 capabilities）；新增 `GET /workspaces/current/runners` 与 `GET /workspaces/current/aggregators` 各返回 `{name, i18n_key_prefix, ui_schema, config_schema, scope or required_caps}` | UI 三轴下拉来源 |
 | P2.5 aggregators | 升级为 `ResponseAggregator` / `TokenAggregator` typed 基类；`AggregationContext` 注入；P1 已落地的 majority_vote / concat 平滑迁移到 response scope | P1 调用点零影响 |
 | P2.6 TokenVoteEngine | 重命名 `TokenStepRunner(EnsembleRunner)`；算法逻辑同 PN.py；新增 `requirements()` + `TraceCollector` 调用点 | |
-| **新 P2.6.5** | `ResponseLevelRunner` 落地（包 P1 ensemble-aggregator 现有逻辑） | v0.2 第二个参考 runner |
+| **新 P2.6.5** | `ResponseLevelRunner` 落地（包 P1 response-aggregator 现有逻辑） | v0.2 第二个参考 runner |
 | P2.7 engine 单测 | + Capability 粗过滤 + Requirements 精校验路径 + scope 不匹配测试 + Trace 开关行为测试 | |
 | P2.8 ParallelEnsembleNode | 字段重组：`runner_name` / `aggregator_name` / `runner_config` / `aggregator_config` / `diagnostics`；`extra="forbid"` 三层 | |
 | P2.9 node_factory 注入 | 注入 `model_registry` / `runner_registry` / `aggregator_registry` / `backend_registry` / `executor` | 5 个依赖 |

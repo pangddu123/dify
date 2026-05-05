@@ -11,7 +11,7 @@ const Node: FC<NodeProps<ParallelEnsembleNodeType>> = ({ data }) => {
   const ensemble = data.ensemble
   const sourceCount = ensemble?.token_sources?.length ?? 0
 
-  // Match ensemble-aggregator's "hide if no inputs" behaviour: a fresh
+  // Match response-aggregator's "hide if no inputs" behaviour: a fresh
   // node on the canvas surfaces only its title + icon; once the user
   // wires upstream sources, the runner label + count chip appear so the
   // graph is glanceable without opening the panel.

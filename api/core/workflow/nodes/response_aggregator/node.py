@@ -13,8 +13,8 @@ from graphon.nodes.base.node import Node
 from . import RESPONSE_AGGREGATOR_NODE_TYPE
 from .entities import AggregationInputRef, ResponseAggregatorNodeData
 from .exceptions import (
-    ResponseAggregatorNodeError,
     MissingInputError,
+    ResponseAggregatorNodeError,
     StrategyConfigError,
     WeightResolutionError,
 )

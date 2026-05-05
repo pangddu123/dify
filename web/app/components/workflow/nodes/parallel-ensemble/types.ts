@@ -143,7 +143,7 @@ export type ParallelEnsembleNodeType = CommonNodeType & {
 // After ADR-v3-16 the parallel-ensemble node is token-mode-only:
 // ``response_level`` runner + ``majority_vote`` / ``concat`` aggregators
 // were lifted out (response-level ensembling now lives on the
-// ensemble-aggregator node). Backend currently only registers
+// response-aggregator node). Backend currently only registers
 // ``token_step`` + the token-scope aggregators (``sum_score``,
 // ``max_score``); a fresh node must default to that pair so saving an
 // untouched node never produces a DSL the §9 startup pipeline rejects

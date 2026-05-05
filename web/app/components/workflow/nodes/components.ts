@@ -14,8 +14,6 @@ import DocExtractorNode from './document-extractor/node'
 import DocExtractorPanel from './document-extractor/panel'
 import EndNode from './end/node'
 import EndPanel from './end/panel'
-import EnsembleAggregatorNode from './ensemble-aggregator/node'
-import EnsembleAggregatorPanel from './ensemble-aggregator/panel'
 import HttpNode from './http/node'
 import HttpPanel from './http/panel'
 import HumanInputNode from './human-input/node'
@@ -40,6 +38,8 @@ import ParameterExtractorNode from './parameter-extractor/node'
 import ParameterExtractorPanel from './parameter-extractor/panel'
 import QuestionClassifierNode from './question-classifier/node'
 import QuestionClassifierPanel from './question-classifier/panel'
+import ResponseAggregatorNode from './response-aggregator/node'
+import ResponseAggregatorPanel from './response-aggregator/panel'
 import StartNode from './start/node'
 import StartPanel from './start/panel'
 import TemplateTransformNode from './template-transform/node'
@@ -72,7 +72,7 @@ export const NodeComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.VariableAssigner]: VariableAssignerNode,
   [BlockEnum.Assigner]: AssignerNode,
   [BlockEnum.VariableAggregator]: VariableAssignerNode,
-  [BlockEnum.EnsembleAggregator]: EnsembleAggregatorNode,
+  [BlockEnum.ResponseAggregator]: ResponseAggregatorNode,
   [BlockEnum.ParallelEnsemble]: ParallelEnsembleNode,
   [BlockEnum.TokenModelSource]: TokenModelSourceNode,
   [BlockEnum.ParameterExtractor]: ParameterExtractorNode,
@@ -103,7 +103,7 @@ export const PanelComponentMap: Record<string, ComponentType<any>> = {
   [BlockEnum.Tool]: ToolPanel,
   [BlockEnum.VariableAssigner]: VariableAssignerPanel,
   [BlockEnum.VariableAggregator]: VariableAssignerPanel,
-  [BlockEnum.EnsembleAggregator]: EnsembleAggregatorPanel,
+  [BlockEnum.ResponseAggregator]: ResponseAggregatorPanel,
   [BlockEnum.ParallelEnsemble]: ParallelEnsemblePanel,
   [BlockEnum.TokenModelSource]: TokenModelSourcePanel,
   [BlockEnum.Assigner]: AssignerPanel,

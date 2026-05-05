@@ -36,7 +36,7 @@ const RunnerSelector: FC<Props> = ({
       // Re-selecting the active runner is a no-op so the parent hook's
       // "wipe runner_config / aggregator pairing" reset doesn't fire on
       // every re-render of the dropdown. Same shape as
-      // ensemble-aggregator's strategy-selector.
+      // response-aggregator's strategy-selector.
       if (runner.name !== selectedName)
         onChange(runner)
     },

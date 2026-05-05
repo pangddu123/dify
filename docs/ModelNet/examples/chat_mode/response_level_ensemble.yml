@@ -107,7 +107,7 @@ workflow:
     - data:
         isInLoop: false
         sourceType: llm
-        targetType: ensemble-aggregator
+        targetType: response-aggregator
       id: llm-a-to-aggregator
       source: llm_a
       sourceHandle: source
@@ -118,7 +118,7 @@ workflow:
     - data:
         isInLoop: false
         sourceType: llm
-        targetType: ensemble-aggregator
+        targetType: response-aggregator
       id: llm-b-to-aggregator
       source: llm_b
       sourceHandle: source
@@ -129,7 +129,7 @@ workflow:
     - data:
         isInLoop: false
         sourceType: llm
-        targetType: ensemble-aggregator
+        targetType: response-aggregator
       id: llm-c-to-aggregator
       source: llm_c
       sourceHandle: source
@@ -139,7 +139,7 @@ workflow:
       zIndex: 0
     - data:
         isInLoop: false
-        sourceType: ensemble-aggregator
+        sourceType: response-aggregator
         targetType: answer
       id: aggregator-to-answer
       source: aggregator
@@ -327,7 +327,7 @@ workflow:
           include_source_label: true
         strategy_name: concat
         title: Response Aggregator
-        type: ensemble-aggregator
+        type: response-aggregator
       height: 150
       id: aggregator
       position:

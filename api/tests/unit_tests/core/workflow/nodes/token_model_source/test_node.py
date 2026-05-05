@@ -4,7 +4,7 @@ Coverage:
 * ``_run`` happy path — yields a single ``StreamCompletedEvent`` with the
   rendered prompt and the documented spec shape (ADR-v3-10).
 * Prompt rendering normalises segment.text for non-string upstreams
-  (mirrors ``ensemble_aggregator`` segment-text contract).
+  (mirrors ``response_aggregator`` segment-text contract).
 * Missing upstream variable → ``PromptRenderError`` → FAILED event
   with structured ``error_type`` for the panel.
 * Constant prompt (no placeholders) skips the variable pool entirely.
@@ -165,7 +165,7 @@ class TestRunHappyPath:
 
 class TestRenderPromptSegmentText:
     """The renderer must use ``Segment.text`` (graphon canonical),
-    matching ``ensemble_aggregator/node.py`` so non-string upstreams
+    matching ``response_aggregator/node.py`` so non-string upstreams
     render the same way across every workflow node."""
 
     def test_object_segment_renders_as_json(self):

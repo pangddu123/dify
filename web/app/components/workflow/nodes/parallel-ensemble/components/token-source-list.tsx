@@ -97,7 +97,7 @@ const TokenSourceList: FC<Props> = ({
     (index: number, currentlyDynamic: boolean) => () => {
       // Switching mode resets to the new mode's neutral default: ``1``
       // for static (= unweighted), ``[]`` for dynamic (= picker not yet
-      // pointed at anything). Mirrors ensemble-aggregator's input list.
+      // pointed at anything). Mirrors response-aggregator's input list.
       onWeightChange(index, currentlyDynamic ? 1 : [])
       if (currentlyDynamic) {
         // ``fallback_weight`` only has meaning when ``weight`` is a

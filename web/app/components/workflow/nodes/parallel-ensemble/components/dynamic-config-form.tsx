@@ -227,7 +227,7 @@ const DynamicConfigForm: FC<Props> = ({
 }) => {
   const handlePatchKey = useCallback(
     (key: string, next: unknown) => {
-      // Match ensemble-aggregator's patch semantics: ``undefined``
+      // Match response-aggregator's patch semantics: ``undefined``
       // deletes the key so the backend default applies — assigning
       // ``undefined`` to a property would serialize as ``null`` /
       // explicit absence depending on the encoder.

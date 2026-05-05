@@ -9,7 +9,7 @@ The two important changes vs P2.1:
      register a new spec subclass without editing framework code.
   2. ``LocalModelRegistry`` is kept as a backwards-compat alias for one
      release (TASKS.md L267) so already-merged P2.1 imports (P1 tests,
-     ensemble_aggregator, anything that did ``from llama_cpp.registry``)
+     response_aggregator, anything that did ``from llama_cpp.registry``)
      stay green during the migration window.
 
 R9 (missing yaml is *not* an error) and the ADR-3 ``list_aliases()``

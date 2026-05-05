@@ -5,14 +5,14 @@
 - **状态**：草案（pre-implementation）。本文不替代 `DEVELOPMENT_PLAN.md` v2.4，
   而是在 v2.4 已落地（Phase 0–P2.12）的基础上**修订 token 模式架构**并**升级
   response 模式现有节点**。
-- **基线**：v2.4 全部成果（`ensemble-aggregator` v1 已上线、`parallel-ensemble`
+- **基线**：v2.4 全部成果（`response-aggregator` v1 已上线、`parallel-ensemble`
   P2.12 前端质量门已落地）。
 - **关系图**：
 
   ```
   v2.4 (current)                v3 (this plan)
   ─────────────                 ────────────────
-  ensemble-aggregator    ───►   ensemble-aggregator (upgraded)
+  response-aggregator    ───►   response-aggregator (upgraded)
    (response, basic)             (response, weights + dynamic + ext SPI)
 
   parallel-ensemble      ───►   parallel-ensemble (re-purposed)
@@ -58,7 +58,7 @@ v2.4 的 `parallel-ensemble` 把 N 个模型塞在节点配置里、节点内部
 
 - v2.4 全部已落地的代码（P1.1–P2.12）**完全保留**，不重写
 - v3 只做两件事：
-  1. **升级** `ensemble_aggregator`（response 模式）→ 加权重（含动态 selector）/
+  1. **升级** `response_aggregator`（response 模式）→ 加权重（含动态 selector）/
      fail-fast + 显式 fallback_weight / `ResponseAggregator` SPI 切换至
      `SourceAggregationContext`（**不**含 top_k_override，那是 token 模式独有）
   2. **重定位** `parallel_ensemble`（token 模式）→ 上游改成 `token-model-source`
@@ -75,18 +75,18 @@ v2.4 的 `parallel-ensemble` 把 N 个模型塞在节点配置里、节点内部
 
 | ID | 决策 | 上下文 |
 |---|---|---|
-| ADR-v3-1 | response 模式：升级现有 `ensemble_aggregator`，**不**重写 | EP-5；现有 `AggregationInputRef` 已经是配置行驱动 |
+| ADR-v3-1 | response 模式：升级现有 `response_aggregator`，**不**重写 | EP-5；现有 `AggregationInputRef` 已经是配置行驱动 |
 | ADR-v3-2 | response 模式上游 = 任何输出 text 的节点（LLM/HTTP/Code/Agent/Ollama via Dify model_runtime/...） | 用户 4-Z 决策；`segment.text` 已支持多类型自动渲染 |
 | ADR-v3-3 | token 模式：聚合器即执行器，禁止"上游 token 流"幻想 | §1.2 graphon 流式语义 |
 | ADR-v3-4 | token 模式上游 = `token-model-source` 节点输出的 `ModelInvocationSpec` | 节点边界清晰 + variable pool 可序列化 |
 | ADR-v3-5 | per-input 权重双语义：per-run 启动时解析（图变量）+ per-token 策略内部计算（不是图变量） | 用户 Q1；graphon 不支持节点运行中变量更新 |
 | ADR-v3-6 | per-source top-K 覆盖**仅在 token 模式**生效，位置：`TokenSourceRef.top_k_override` 与 `token-model-source.sampling_params.top_k`（后者优先级低，被前者覆盖）。**response 模式不存在 top-K candidates 概念**，`AggregationInputRef` 行只保留 `weight`/`alias`/`extra` | 用户 Q2 + 修订评论 4：response 上游已经是 final text，谈 top-K 无落点 |
 | ADR-v3-7 | 配置项强类型 + `extra: dict[str, Any]` 扩展位；不裸奔 `dict[str, dict]` | 用户反馈；DSL typo 难查 |
-| ADR-v3-8 | 收敛策略 SPI **+ context 分层**：抽出 `SourceAggregationContext`（仅含 `sources`/`weights`/`source_meta`/`strategy_config`）作为**所有上游为 source 的聚合**通用契约；token 模式扩展为 `BackendAggregationContext(SourceAggregationContext)`，再带 `backends`/`capabilities`/`runner_name`/`runner_config`/`trace`/`elapsed_ms_so_far`/`step_index`。`ResponseAggregator` 消费 `SourceAggregationContext`（`ensemble_aggregator` 上游是 HTTP/Code/Agent 任意 text 节点，**不存在 backend/capability**），`TokenAggregator` 消费 `BackendAggregationContext`。两节点共用同一棵 SPI 树，但策略不再被迫感知不属于自己语义的字段。 | 单一 SPI 但语义分层；修订评论 1：原 `AggregationContext.backends/capabilities/runner_name` 是 backend/runner 语义，不该强加给 response 策略 |
-| ADR-v3-9 | `parallel_ensemble.runners.response_level` **删除** | 多模型并发由图引擎+多上游做；保留它会与 `ensemble_aggregator` 形成职责冲突 |
+| ADR-v3-8 | 收敛策略 SPI **+ context 分层**：抽出 `SourceAggregationContext`（仅含 `sources`/`weights`/`source_meta`/`strategy_config`）作为**所有上游为 source 的聚合**通用契约；token 模式扩展为 `BackendAggregationContext(SourceAggregationContext)`，再带 `backends`/`capabilities`/`runner_name`/`runner_config`/`trace`/`elapsed_ms_so_far`/`step_index`。`ResponseAggregator` 消费 `SourceAggregationContext`（`response_aggregator` 上游是 HTTP/Code/Agent 任意 text 节点，**不存在 backend/capability**），`TokenAggregator` 消费 `BackendAggregationContext`。两节点共用同一棵 SPI 树，但策略不再被迫感知不属于自己语义的字段。 | 单一 SPI 但语义分层；修订评论 1：原 `AggregationContext.backends/capabilities/runner_name` 是 backend/runner 语义，不该强加给 response 策略 |
+| ADR-v3-9 | `parallel_ensemble.runners.response_level` **删除** | 多模型并发由图引擎+多上游做；保留它会与 `response_aggregator` 形成职责冲突 |
 | ADR-v3-10 | `token-model-source` 节点 `_run()` 不调模型；输出 `ModelInvocationSpec`（model_alias + prompt + sampling_params + extra）到 variable pool | aggregator-as-executor 模型契约 |
 | ADR-v3-11 | v2.4 的 P2.10/P2.11/P2.12 测试**翻译式迁移**，不丢弃；模型并发部分删除，聚合部分保留 | 保护既有投入 |
-| ADR-v3-12 | 是否合并 `ensemble-aggregator` 进 `parallel-ensemble` 的决策**延后**到 v3 全部 ship 后 | 现阶段重要的是先把 token 模式跑起来 |
+| ADR-v3-12 | 是否合并 `response-aggregator` 进 `parallel-ensemble` 的决策**延后**到 v3 全部 ship 后 | 现阶段重要的是先把 token 模式跑起来 |
 | ADR-v3-13 | v2.4 已存在的 DSL **不**做向上兼容；旧 DSL 加载由 pydantic `extra="forbid"` / 缺字段自然 `ValidationError`；不提供 migration 工具 | 用户决策（2026-04-29）；研究 fork 阶段，无生产 DSL 需要保护——把保留兼容的工程预算让给"更激进的清理 + 更干净的新 schema" |
 | ADR-v3-14 | **`ModelBackend.step_token` SPI 扩展**：签名从 `step_token(prompt: str, top_k: int)` 改为 `step_token(prompt: str, params: TokenStepParams)`，其中 `TokenStepParams` 强类型承载 `top_k` / `temperature` / `top_p` / `max_tokens` / `stop` / `seed` 等 sampling 参数。`token_step.py` 调用前从 `TokenModelSource.sampling_params` + `TokenSourceRef.top_k_override` 合并构造 `params`。`backends/llama_cpp.py` 适配新签名（per-call 应用 sampling params 到 llama.cpp 的 sampling chain，不依赖 backend 实例化时的全局值） | 修订评论 3：原"算法不变"低估了改造量——若不扩 SPI，`TokenModelSource.sampling_params.{temperature,top_p,stop,seed}` 等字段会被 backend 静默丢弃，等于研究配置失效 |
 | ADR-v3-15 | **动态 weight 解析失败 = fail fast**：`AggregationInputRef.weight` 是 `VariableSelector` 时，解析失败默认抛 `WeightResolutionError`（带 `input_id` + `selector` + 原因），节点直接 `FAILED`。**不**做 silent fallback 到 1.0。如果用户确实要容错，需显式声明 `AggregationInputRef.fallback_weight: float \| None = None`，且只有它非空时解析失败才回退到该值并在 trace 写 warning | 修订评论 5：silent fallback 会悄悄改变研究实验条件（论文里 weight=0.7/0.3 可能跑成 1.0/1.0）；fail fast 是研究 fork 的正确默认 |
@@ -106,7 +106,7 @@ v2.4 的 `parallel-ensemble` 把 N 个模型塞在节点配置里、节点内部
 │  │ (任意上游) │ ─►   selector: [llm-1, text]                    │
 │  └────────────┘            ─┐                                   │
 │                              │                                  │
-│  ┌─ HTTP Req  ─┐             │       ┌─ ensemble-aggregator ─┐  │
+│  ┌─ HTTP Req  ─┐             │       ┌─ response-aggregator ─┐  │
 │  │ (任意上游) │ ─► [http-1,  │ ───►  │  (升级版)              │  │
 │  └────────────┘   response]  │       │  inputs: 配置行驱动    │  │
 │                              │       │  strategy: 任选        │  │
@@ -176,7 +176,7 @@ parallel-ensemble._run() 在收到 N 个 spec 后：
 
 ## 4. 后端改造清单
 
-### 4.1 `ensemble_aggregator/`（response 升级）
+### 4.1 `response_aggregator/`（response 升级）
 
 | 文件 | 处置 | 改动要点 |
 |---|---|---|
@@ -202,7 +202,7 @@ parallel-ensemble._run() 在收到 N 个 spec 后：
 | `spi/aggregator.py` | **重写 + 切分 context** | 新增 `SourceAggregationContext`（sources/weights/source_meta/strategy_config）；`BackendAggregationContext(SourceAggregationContext)` 再带 backends/capabilities/runner_name/runner_config/trace/elapsed_ms_so_far/step_index；`ResponseAggregator` 消费前者，`TokenAggregator` 消费后者（ADR-v3-8） |
 | `spi/runner.py` | **保留 + 适配** | runner 接口收到的 backend 调用参数从 `top_k:int` 换成 `params: TokenStepParams`（透传） |
 | `spi/backend.py` | **改签名** | `ModelBackend.step_token(prompt, top_k)` → `step_token(prompt, params: TokenStepParams)`；新增 `TokenStepParams` TypedDict/BaseModel（详见 §4.4） |
-| `aggregators/response/*` | **删除** | response 路径转给 `ensemble_aggregator`；这里只留 token aggregator |
+| `aggregators/response/*` | **删除** | response 路径转给 `response_aggregator`；这里只留 token aggregator |
 | `aggregators/token/*` | **保留 + 适配 context** | sum_score / max_score 算法不变；`aggregate(signals, context, config)` 的 `context` 类型从旧 `AggregationContext` 改名为 `BackendAggregationContext`（字段超集，行为兼容） |
 | `backends/llama_cpp.py` | **适配新 SPI** | `step_token(prompt, params)` 内部把 `params.{top_k,temperature,top_p,stop,seed,max_tokens}` 应用到 llama.cpp 的 sampling chain（per-call，非全局），保证 per-source sampling 真的生效（ADR-v3-14） |
 | `llama_cpp/registry.py` | **保留** | yaml 注册表仍是模型来源 |
@@ -376,7 +376,7 @@ class TokenAggregator(Aggregator[ConfigT, list[TokenSignal], TokenAggregationRes
 
 **为什么这样切分**（修订评论 1 的核心）：
 
-- `ensemble_aggregator` 的上游是 HTTP / Code / Agent / 任意 LLM 节点，**不**经过
+- `response_aggregator` 的上游是 HTTP / Code / Agent / 任意 LLM 节点，**不**经过
   `LocalModelRegistry`，**没有** backend 实例、**没有** capability 矩阵、**没有**
   runner。强迫 response 策略接收 `backends`/`capabilities`/`runner_name` 等于
   让策略撒谎或忽略字段——前者污染 SPI 语义，后者让"加新 response 策略"的扩展
@@ -386,7 +386,7 @@ class TokenAggregator(Aggregator[ConfigT, list[TokenSignal], TokenAggregationRes
   以**继承**关系挂在 `SourceAggregationContext` 之下：token aggregator 想看 source
   视图也能看（同一份 weights/sources）
 
-`ensemble_aggregator/strategies/weighted_majority_vote.py`（response 策略示例）：
+`response_aggregator/strategies/weighted_majority_vote.py`（response 策略示例）：
 
 ```python
 @register("weighted_majority_vote")
@@ -435,7 +435,7 @@ class AdaptiveWeightedToken(TokenAggregator[_Config]):
 
 | 想做的事 | 改的文件 | 工作量 |
 |---|---|---|
-| 加新 response 策略（如 RRF） | `ensemble_aggregator/strategies/rrf.py` + `@register`（继承 `ResponseAggregator`，签名只看到 `SourceAggregationContext`） | 1 文件 |
+| 加新 response 策略（如 RRF） | `response_aggregator/strategies/rrf.py` + `@register`（继承 `ResponseAggregator`，签名只看到 `SourceAggregationContext`） | 1 文件 |
 | 加新 token 策略 | `parallel_ensemble/aggregators/token/<name>.py` + `@register`（继承 `TokenAggregator`，签名看到 `BackendAggregationContext`） | 1 文件 |
 | 加新模型后端（vLLM logprobs / OpenAI logprobs） | `parallel_ensemble/backends/<name>.py` + `BackendSpec` 子类 + `@register`，实现 `step_token(prompt, params: TokenStepParams)` 即可 | 2 文件 |
 | 加新 token runner（speculative decoding 等） | `parallel_ensemble/runners/<name>.py` + `@register`，循环里透传 `TokenStepParams` 给 backend | 1 文件 |
@@ -447,7 +447,7 @@ class AdaptiveWeightedToken(TokenAggregator[_Config]):
 
 ## 6. 前端改造清单
 
-### 6.1 `ensemble-aggregator` 前端升级
+### 6.1 `response-aggregator` 前端升级
 
 | 文件 | 改动 |
 |---|---|
@@ -485,7 +485,7 @@ web/app/components/workflow/nodes/token-model-source/
 | `components/model-selector.tsx` | **删除** —— 不再节点内选模型 |
 | `components/import-model-info-button.tsx` | **删除** —— 模型 info 现在通过 token-model-source 节点维护 |
 | `components/question-variable-select.tsx`（若 v2.4 单独存在） | **删除** —— ADR-v3-16，prompt 由 token-model-source 节点渲染，节点级问题变量已无意义 |
-| `components/token-source-list.tsx` | **新增** —— 类似 ensemble_aggregator 的 InputList，但 selector 限定为 `outputs.spec` 形态；行内含 weight / top_k_override / fallback_weight 三个输入框 |
+| `components/token-source-list.tsx` | **新增** —— 类似 response_aggregator 的 InputList，但 selector 限定为 `outputs.spec` 形态；行内含 weight / top_k_override / fallback_weight 三个输入框 |
 | `components/runner-selector.tsx` | 保留（runner 选择不变） |
 | `components/aggregator-selector.tsx` | 保留 |
 | `components/diagnostics-config.tsx` | 保留 |
@@ -495,7 +495,7 @@ web/app/components/workflow/nodes/token-model-source/
 
 `web/i18n/{en-US,zh-Hans}/workflow.ts` 增加：
 - `nodes.tokenModelSource.*`（新节点）
-- `nodes.ensembleAggregator.*` 加：`weight` / `fallbackWeight` / `weightedMajorityVote.*`（**不**加 `topKOverride`，ADR-v3-6）
+- `nodes.responseAggregator.*` 加：`weight` / `fallbackWeight` / `weightedMajorityVote.*`（**不**加 `topKOverride`，ADR-v3-6）
 - `nodes.parallelEnsemble.*` 改：`tokenSources` 替代 `modelAliases`；新增 `tokenSources.topKOverride` / `tokenSources.fallbackWeight`；删除 `questionVariable`
 
 ---
@@ -505,9 +505,9 @@ web/app/components/workflow/nodes/token-model-source/
 | Phase | 内容 | 依赖 | 工时 |
 |---|---|---|---|
 | **P3.0** | 本文件 review + memory 更新 + v2.4 文档钩子（"v3 supersedes §6"标注） | — | 0.5d |
-| **P3.A.1** | `ensemble_aggregator` 后端：扩展 `AggregationInputRef`（`weight`/`fallback_weight`/`extra`，**无** `top_k_override`）、SPI 切换至 `ResponseAggregator`（消费 `SourceAggregationContext`）、新增 `weighted_majority_vote` 策略、动态 weight 解析（fail-fast 默认 + 显式 `fallback_weight` 容错） | P3.0 | 1.5d |
-| **P3.A.2** | `ensemble_aggregator` 前端：行内 weight + fallback_weight 输入框（**无** top_k_override）、strategy ui_schema 反射、i18n | P3.A.1 | 1.5d |
-| **P3.A.3** | `ensemble_aggregator` 测试翻译 + 新增（dynamic weight 成功/失败/fallback 三分支 / weighted_majority_vote） | P3.A.1+P3.A.2 | 1d |
+| **P3.A.1** | `response_aggregator` 后端：扩展 `AggregationInputRef`（`weight`/`fallback_weight`/`extra`，**无** `top_k_override`）、SPI 切换至 `ResponseAggregator`（消费 `SourceAggregationContext`）、新增 `weighted_majority_vote` 策略、动态 weight 解析（fail-fast 默认 + 显式 `fallback_weight` 容错） | P3.0 | 1.5d |
+| **P3.A.2** | `response_aggregator` 前端：行内 weight + fallback_weight 输入框（**无** top_k_override）、strategy ui_schema 反射、i18n | P3.A.1 | 1.5d |
+| **P3.A.3** | `response_aggregator` 测试翻译 + 新增（dynamic weight 成功/失败/fallback 三分支 / weighted_majority_vote） | P3.A.1+P3.A.2 | 1d |
 | **🟢 ship A** | response 模式完整可用；外部贡献者可基于这个写自定义策略 | A.1–A.3 | — |
 | **P3.B.0** | **backend SPI 扩展（ADR-v3-14）+ context 切分（ADR-v3-8）**：`spi/aggregator.py` 拆 `SourceAggregationContext` / `BackendAggregationContext`；`spi/backend.py` 新增 `TokenStepParams`，`step_token` 改签名为 `(prompt, params)`；`backends/llama_cpp.py` 适配 per-call sampling chain；`runners/{token_step,think_phase}.py` 透传 params；`aggregators/token/*` 改 context 名 | A ship | 1.5d |
 | **P3.B.1** | `token-model-source` 后端：node.py + entities.py（含强类型 `SamplingParams`）+ 注册 + 单测（prompt 模板渲染、spec 输出） | B.0 | 1d |
@@ -534,9 +534,9 @@ web/app/components/workflow/nodes/token-model-source/
 > "v2.4 → v3" 转换脚本。研究 fork 阶段无生产 DSL 需要保护，省下的工程预算转移给
 > Phase A/B 的激进清理（详见 ADR-v3-13 上下文）。
 >
-> 副作用提示：旧 `ensemble-aggregator` DSL 因为 v3 仅追加可选字段（pydantic 默认值
+> 副作用提示：旧 `response-aggregator` DSL 因为 v3 仅追加可选字段（pydantic 默认值
 > 兜底），加载会**自然成功**——但这是 schema 演进的副作用，不是承诺。如果 Phase A
-> 后续需要破坏性改动 `ensemble-aggregator` 字段，依然按 ADR-v3-13 处理（让旧 DSL
+> 后续需要破坏性改动 `response-aggregator` 字段，依然按 ADR-v3-13 处理（让旧 DSL
 > 报错，不打补丁）。
 
 ### 8.1 v2.4 测试套件迁移
@@ -545,14 +545,14 @@ web/app/components/workflow/nodes/token-model-source/
 |---|---|
 | `parallel_ensemble/__tests__/`（事件序列、§9、storage、DSL 防护）| **翻译式重写**：删除 model_aliases 相关用例；用 `token_sources` fixture 替换；DSL 防护层（`_FORBIDDEN_TOP_LEVEL_KEYS`）只保留 SSRF 相关键（`model_url`/`api_key`/...），不加 `model_aliases` 防护——`extra="forbid"` 会更早拦下 |
 | `parallel_ensemble/runners/response_level` 相关测试 | **整体删除**（ADR-v3-9） |
-| `ensemble_aggregator/` 已有测试 | **保留 + 扩**：增加 weight / dynamic weight / weighted_majority_vote 用例 |
+| `response_aggregator/` 已有测试 | **保留 + 扩**：增加 weight / dynamic weight / weighted_majority_vote 用例 |
 | 前端 `parallel-ensemble/__tests__/panel.spec.tsx` | **翻译式重写**：基于 token-source-list 而非 model-selector |
 | 前端 `parallel-ensemble/components/__tests__/model-selector.spec.tsx` | **删除**（组件被删） |
 
 ### 8.2 文档钩子
 
 - `DEVELOPMENT_PLAN.md` v2.4 §6 顶部加状态横幅："superseded by `DEVELOPMENT_PLAN_v3.md` Phase B; this section retained as historical context"
-- `EXTENSIBILITY_SPEC.md` §3（Capability 矩阵）加注："response_level runner 已在 v3 删除，response 模式统一走 ensemble-aggregator + ResponseAggregator SPI"
+- `EXTENSIBILITY_SPEC.md` §3（Capability 矩阵）加注："response_level runner 已在 v3 删除，response 模式统一走 response-aggregator + ResponseAggregator SPI"
 - `BACKEND_CAPABILITIES.md` 加一节："token-model-source 节点贡献的 spec → backend 资格映射"
 - 不写 `docs/ModelNet/MIGRATION_v2_to_v3.md`——按 ADR-v3-13 这是非目标
 
@@ -567,7 +567,7 @@ web/app/components/workflow/nodes/token-model-source/
 | Rv3-3 | 用户在画布上漏接一个 token-model-source 但 parallel-ensemble 已配置 N 条 token_sources → 启动报错 | 中 | §9 校验加新 step：检查每个 token_source 的 spec_selector 在 variable_pool schema 里能解析到 ModelInvocationSpec 形状 |
 | Rv3-4 | per-source `top_k_override` > backend 实际 supported top-K → 调用失败（**仅 token 模式**，ADR-v3-6） | 中 | §9 capability 校验时构造 `effective_params = TokenStepParams(spec.sampling_params + ref.top_k_override)`，再以 effective `top_k` 走 capability matching；response 模式无此风险（已无 top_k_override） |
 | Rv3-5 | token-model-source 输出 spec 后被其他节点（非 parallel-ensemble）误用 | 低 | 不强制阻止；`ModelInvocationSpec` 是 TypedDict，谁都能消费；EXTENSION_GUIDE 文档化合法消费者 |
-| Rv3-6 | 收敛 SPI 后 `ensemble_aggregator/strategies/base.py` 与 `parallel_ensemble.spi.aggregator` 双向 import | 低 | `ensemble_aggregator` 单向 import 自 `parallel_ensemble.spi`（依赖方向已确定），不构成 cycle |
+| Rv3-6 | 收敛 SPI 后 `response_aggregator/strategies/base.py` 与 `parallel_ensemble.spi.aggregator` 双向 import | 低 | `response_aggregator` 单向 import 自 `parallel_ensemble.spi`（依赖方向已确定），不构成 cycle |
 | Rv3-7 | 老 v2.4 DSL 用户加载 v3 报错时不知所措 | 低 | ADR-v3-13 决定**不缓解**——pydantic `ValidationError` 自带字段名 + 错误原因，足以指引用户重建工作流；研究 fork 阶段没有需要保护的"老用户"语义 |
 | Rv3-8 | `ModelBackend.step_token` 签名扩展（ADR-v3-14）会让 v2.4 写过的 backend / mock backend 全部不能直接复用 | 中 | 这是有意为之——v2.4 mock 把 sampling 当全局值的写法本来就限制了 PN.py 风格的研究表达力。P3.B.0 一次性升级所有内置 backend + 所有测试 mock；EXTENSION_GUIDE 给第三方 backend 写迁移示例（旧 `step_token(prompt, top_k)` → 新 `step_token(prompt, params)` 一处改动） |
 | Rv3-9 | `ResponseAggregator` 收到 `SourceAggregationContext` 后丢失 `trace`，导致 response 策略不能写诊断日志 | 低 | `SourceAggregationContext` 不带 trace 是有意设计——response 模式上游不在节点内执行，没有 step-level trace 概念。策略需要写 metadata 走 `ResponseAggregationResult.metadata`（节点会把它合并进 outputs），而不是 trace 流 |
@@ -578,7 +578,7 @@ web/app/components/workflow/nodes/token-model-source/
 
 | 项 | 决策时机 |
 |---|---|
-| 是否将 `ensemble-aggregator` 合并进 `parallel-ensemble` 成单节点 | Phase B ship 后，看用户使用反馈 |
+| 是否将 `response-aggregator` 合并进 `parallel-ensemble` 成单节点 | Phase B ship 后，看用户使用反馈 |
 | 是否提供 `Anthropic logprobs` / `OpenAI logprobs` backend（v0.3 backend pack）| v3 全部 ship 后 |
 | 是否做 sentence-bert 语义投票策略 | 第三方贡献者按需 |
 | 是否给 `token-model-source` 加 prompt 模板预览 | P3.B.2 前端落地时再决定 |
@@ -592,7 +592,7 @@ web/app/components/workflow/nodes/token-model-source/
 
 针对 v3.0.1 的 5 条 review 评论修订：
 
-1. **context 切分**（评论 1）：原 ADR-v3-8 让 `ensemble_aggregator` 直接吃带
+1. **context 切分**（评论 1）：原 ADR-v3-8 让 `response_aggregator` 直接吃带
    `backends/capabilities/runner_name/trace` 的 `AggregationContext`，但 response
    模式上游是任意 text 节点（HTTP/Code/Agent），没有 backend/capability 概念。
    - 拆出 `SourceAggregationContext`（sources/weights/source_meta/strategy_config）
@@ -638,7 +638,7 @@ web/app/components/workflow/nodes/token-model-source/
 
 ### v3 (2026-04-29, 本文件初稿)
 - 基于用户对 v2.4 token 模式的根本性纠正：streaming 不流到下游 → token 协作必须聚合器即执行器
-- 升级 ensemble_aggregator（response 模式）+ 重定位 parallel_ensemble（token 模式）
+- 升级 response_aggregator（response 模式）+ 重定位 parallel_ensemble（token 模式）
 - 新增 token-model-source 节点
 - 收敛策略 SPI 至单一 `ResponseAggregator`/`TokenAggregator` 契约（沿用 v2.4 已有 SPI）
 - 总工时：~13.5d（v3.0.2 修订为 ~15d）

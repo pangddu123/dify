@@ -1,7 +1,7 @@
 """Built-in runners for the parallel-ensemble node (v3 P3.B.0).
 
 After ADR-v3-9 the parallel-ensemble node is the *token-mode* node; the
-response-level path moved back under ``ensemble_aggregator``. Only one
+response-level path moved back under ``response_aggregator``. Only one
 runner ships in the box now:
 
 * ``token_step`` — PN.py-style per-step voting (``TokenStepRunner``,

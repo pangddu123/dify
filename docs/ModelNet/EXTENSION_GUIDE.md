@@ -735,7 +735,7 @@ uv run --project api pytest api/tests/unit_tests/core/workflow/nodes/parallel_en
 | Backend | `parallelEnsemble.backends.<camelName>` | `label`, `description`（可选） |
 
 **JSON 文件格式**：`web/i18n/{en-US,zh-Hans}/workflow.json` 是**扁平 dotted-key**
-对象（与 `blocks.agent`, `nodes.ensembleAggregator.*` 同风格），不是嵌套对象。
+对象（与 `blocks.agent`, `nodes.responseAggregator.*` 同风格），不是嵌套对象。
 所有 key 在 JSON 顶层并列：
 
 ```json
@@ -784,7 +784,7 @@ Dify 前端的扁平 lookup 完全忽略。
 | 改了 i18n 但浏览器不更新 | Next.js i18n 资源 cache | 浏览器硬刷新（Cmd+Shift+R）或 `pnpm dev` 重启 |
 | 加 backend 后 yaml 报 `extra_forbidden` | spec 子类没把字段加进去 | 子类 `MyXxxSpec` 必须列出所有 yaml 里出现的字段；`extra="forbid"` 在 BaseSpec 上是硬约束（SSRF 防护，不能关）|
 | 测试时 `from ...spi.aggregator import` 报 ImportError | SPI 还没落地（P2.1.5 未完成）| 等待 SPI 接口冻结；本指南目前是预览，不是 quickstart |
-| 单测 `from api.core...` 报 `No module named 'api'` | 本仓 pytest 工作目录是 `api/`，import root 是 `core`，不是 `api.core` | 改为 `from core.workflow.nodes.parallel_ensemble...`；与现有 `tests/unit_tests/core/workflow/nodes/ensemble_aggregator/test_*.py` 一致 |
+| 单测 `from api.core...` 报 `No module named 'api'` | 本仓 pytest 工作目录是 `api/`，import root 是 `core`，不是 `api.core` | 改为 `from core.workflow.nodes.parallel_ensemble...`；与现有 `tests/unit_tests/core/workflow/nodes/response_aggregator/test_*.py` 一致 |
 
 ---
 

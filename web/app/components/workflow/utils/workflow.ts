@@ -38,7 +38,7 @@ export const canRunBySingle = (nodeType: BlockEnum, isChildNode: boolean) => {
     || nodeType === BlockEnum.TriggerSchedule
     || nodeType === BlockEnum.TriggerWebhook
     || nodeType === BlockEnum.TriggerPlugin
-    || nodeType === BlockEnum.EnsembleAggregator
+    || nodeType === BlockEnum.ResponseAggregator
     || nodeType === BlockEnum.ParallelEnsemble
     || nodeType === BlockEnum.TokenModelSource
 }
