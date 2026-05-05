@@ -172,11 +172,11 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
 
     def __init__(
         self,
-        id: str,
+        node_id: str,
         config: Any,
+        *,
         graph_init_params: Any,
         graph_runtime_state: Any,
-        *,
         model_registry: ModelRegistry,
         runner_registry: type[RunnerRegistry],
         aggregator_registry: type[AggregatorRegistry],
@@ -185,7 +185,7 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
         http_client: object | None = None,
     ) -> None:
         super().__init__(
-            id=id,
+            node_id=node_id,
             config=config,
             graph_init_params=graph_init_params,
             graph_runtime_state=graph_runtime_state,

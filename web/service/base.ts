@@ -262,7 +262,11 @@ export const handleStream = (
               onCompleted?.(true, 'Invalid response data')
               return
             }
-            if (bufferObj.status === 400 || !bufferObj.event) {
+            if (
+              bufferObj.event === 'error'
+              || (typeof bufferObj.status === 'number' && bufferObj.status >= 400)
+              || !bufferObj.event
+            ) {
               onData('', false, {
                 conversationId: undefined,
                 messageId: '',

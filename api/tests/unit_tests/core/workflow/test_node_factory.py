@@ -668,7 +668,7 @@ class TestDifyNodeFactoryCreateNode:
 
         assert result is sentinel.parallel_ensemble_node
         kwargs = constructor.call_args.kwargs
-        assert kwargs["id"] == "node-id"
+        assert kwargs["node_id"] == "node-id"
         _assert_typed_node_config(kwargs["config"], node_id="node-id", node_type=PARALLEL_ENSEMBLE_NODE_TYPE)
         assert kwargs["graph_init_params"] is sentinel.graph_init_params
         assert kwargs["graph_runtime_state"] is factory.graph_runtime_state
