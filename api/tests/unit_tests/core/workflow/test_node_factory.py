@@ -657,7 +657,7 @@ class TestDifyNodeFactoryCreateNode:
         model_registry_instance = MagicMock()
         monkeypatch.setattr(ModelRegistry, "instance", MagicMock(return_value=model_registry_instance))
 
-        constructor = MagicMock(name="ParallelEnsembleNode", return_value=sentinel.parallel_ensemble_node)
+        constructor = _node_constructor(return_value=sentinel.parallel_ensemble_node)
         monkeypatch.setattr(
             factory,
             "_resolve_node_class",

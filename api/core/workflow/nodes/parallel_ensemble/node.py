@@ -157,11 +157,14 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
       under load (TASKS.md R10).
 
     HTTP traffic to model endpoints flows through the object the
-    factory passes as ``http_client``. The default falls back to
-    ``core.helper.ssrf_proxy.ssrf_proxy`` so the node remains
-    constructible from tests / standalone scripts; production wiring
-    overrides this with the same ssrf-proxy instance the HTTP-request
-    node already uses.
+    factory passes as ``http_client``. Production wiring injects
+    ``core.helper.ssrf_proxy.graphon_ssrf_proxy`` (the graphon-typed
+    adapter the HTTP-request node also uses), whose responses follow
+    the graphon ``HttpResponse`` contract — backends decode via
+    ``response.text`` because that surface has no ``.json()``. The
+    default fallback to ``ssrf_proxy`` (the httpx-typed adapter) is
+    only for tests / standalone scripts that build a
+    ``ParallelEnsembleNode`` without going through the factory.
     """
 
     node_type: ClassVar[NodeType] = PARALLEL_ENSEMBLE_NODE_TYPE
@@ -196,10 +199,12 @@ class ParallelEnsembleNode(Node[ParallelEnsembleNodeData]):
         self._backend_registry = backend_registry
         self._executor = executor
         # Backend instances need an ``HttpClientProtocol`` for SPI
-        # compliance; production wires ``ssrf_proxy`` here. The lazy
-        # import keeps standalone unit tests / tools that build a
-        # ``ParallelEnsembleNode`` instance with an explicit mock from
-        # paying the import cost of a Flask-side helper.
+        # compliance; production wires ``graphon_ssrf_proxy`` (see
+        # node_factory.py — same client the HTTP-request node uses).
+        # This fallback to ``ssrf_proxy`` only fires for callers that
+        # construct the node directly without a factory (tests /
+        # standalone tools); the lazy import keeps that path from
+        # paying the Flask-side helper's import cost.
         if http_client is None:
             from core.helper.ssrf_proxy import ssrf_proxy
 

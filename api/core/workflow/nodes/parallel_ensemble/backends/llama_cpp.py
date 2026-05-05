@@ -3,10 +3,13 @@
 P2.2 lands the runtime: ``capabilities`` / ``validate_requirements`` /
 ``generate`` / ``generate_stream`` / ``step_token`` / ``apply_template``.
 HTTP traffic is routed through whatever ``HttpClientProtocol`` instance
-the framework injects — production wiring (P2.9) hands in
-``core.helper.ssrf_proxy.ssrf_proxy`` so the URLs from
-``api/configs/model_net.yaml`` cannot be reached except through the
-deployment's SSRF proxy (ADR-8 / EXTENSIBILITY_SPEC §4.4 T4).
+the framework injects — production wiring hands in
+``core.helper.ssrf_proxy.graphon_ssrf_proxy`` (the graphon-typed adapter)
+so the URLs from ``api/configs/model_net.yaml`` cannot be reached except
+through the deployment's SSRF proxy (ADR-8 / EXTENSIBILITY_SPEC §4.4 T4).
+Bodies are decoded via ``json.loads(response.text)`` because the graphon
+``HttpResponse`` deliberately exposes only ``text`` / ``content`` /
+``raise_for_status`` — there is no ``.json()`` on that contract.
 
 Wire shape mirrors PN.py (``docs/ModelNet/PN.py``) so the existing
 research workload upgrades by swapping the orchestration layer rather
@@ -98,8 +101,8 @@ def parse_top_probs(payload: dict[str, Any], eos: str) -> list[TokenCandidate]:
 
     R7 (TASKS.md): freeze the ``top_probs`` schema in one place.
 
-    Contract on input ``payload``: comes straight from
-    ``response.json()`` of a ``POST /completion`` call with
+    Contract on input ``payload``: the ``json.loads(response.text)``
+    of a ``POST /completion`` call with
     ``max_tokens=1, n_probs=k, post_sampling_probs=true``.
     Expected shape::
 
@@ -199,7 +202,9 @@ class LlamaCppBackend(ModelBackend):
 
     The class is created per ``(alias × workflow run)``; ``self._http``
     is the ``HttpClientProtocol`` the framework injects (always
-    ``ssrf_proxy`` in production).
+    ``graphon_ssrf_proxy`` in production — see ``node_factory.py``;
+    its responses follow the graphon ``HttpResponse`` shape, so
+    ``_post_json`` decodes via ``response.text``).
     """
 
     spec_class: ClassVar[type[BaseSpec]] = LlamaCppSpec
