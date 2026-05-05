@@ -10,6 +10,7 @@ import type { KnowledgeRetrievalNodeType } from '../../../knowledge-retrieval/ty
 import type { ListFilterNodeType } from '../../../list-operator/types'
 import type { LLMNodeType, StructuredOutput } from '../../../llm/types'
 import type { LoopNodeType } from '../../../loop/types'
+import type { ParallelEnsembleNodeType } from '../../../parallel-ensemble/types'
 import type { ParameterExtractorNodeType } from '../../../parameter-extractor/types'
 import type { QuestionClassifierNodeType } from '../../../question-classifier/types'
 import type { TemplateTransformNodeType } from '../../../template-transform/types'
@@ -642,6 +643,55 @@ const formatItem = (
         { schemaTypeDefinitions },
       ) || []
       res.vars = [...outputSchema, ...HUMAN_INPUT_OUTPUT_STRUCT]
+      break
+    }
+
+    case BlockEnum.ResponseAggregator: {
+      // Mirrors backend ``ResponseAggregatorNode._run`` outputs
+      // (api/core/workflow/nodes/response_aggregator/node.py:94-97).
+      // ``getNodeOutputVars`` lists the same selectors; this branch
+      // exists so VarReferencePicker (End/Answer/any downstream) can
+      // resolve their typed schema — without it, ``toNodeOutputVars``
+      // filters this node out as having ``vars.length === 0``.
+      res.vars = [
+        { variable: 'text', type: VarType.string },
+        { variable: 'metadata', type: VarType.object },
+      ]
+      break
+    }
+
+    case BlockEnum.TokenModelSource: {
+      // Mirrors backend ``TokenModelSourceNode._run`` outputs
+      // (api/core/workflow/nodes/token_model_source/node.py).
+      res.vars = [
+        { variable: 'spec', type: VarType.object },
+        { variable: 'model_alias', type: VarType.string },
+      ]
+      break
+    }
+
+    case BlockEnum.ParallelEnsemble: {
+      // Mirrors backend ``ParallelEnsembleNode._finalize_outputs``
+      // (api/core/workflow/nodes/parallel_ensemble/node.py:494).
+      // ``trace`` is gated on ``ensemble.diagnostics.storage === 'inline'``
+      // — under ``metadata`` storage the trace lands in
+      // ``process_data.ensemble_trace`` and never enters the variable pool,
+      // so listing the selector here would let the user pick a var that
+      // resolves to undefined at runtime. Mirrors the panel's own gating
+      // (parallel-ensemble/panel.tsx:230) so the picker the End/Answer
+      // node sees matches the panel the parallel-ensemble node shows.
+      // (``getNodeOutputVars`` deliberately keeps the upper-bound listing
+      // — it feeds variable cleanup/migration paths where over-listing
+      // is safer than under-listing.)
+      const ensemblePayload = data as ParallelEnsembleNodeType
+      res.vars = [
+        { variable: 'text', type: VarType.string },
+        { variable: 'tokens_count', type: VarType.number },
+        { variable: 'elapsed_ms', type: VarType.number },
+      ]
+      if (ensemblePayload.ensemble?.diagnostics?.storage === 'inline') {
+        res.vars.push({ variable: 'trace', type: VarType.object })
+      }
       break
     }
 
