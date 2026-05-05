@@ -76,6 +76,59 @@ vi.mock('@/app/components/workflow/nodes/_base/components/output-vars', () => ({
   ),
 }))
 
+// The Lexical-based ``PromptEditor`` pulls in the workflow store +
+// EventEmitter context to wire the slash variable picker. None of that
+// belongs in a panel-wiring test — we stub it down to a textarea +
+// readonly probe so the assertions below stay focused on the panel
+// surface (real editor behaviour is covered by the prompt-editor's
+// own suite).
+type PromptEditorMockProps = {
+  value: string
+  readOnly?: boolean
+  onChange: (next: string) => void
+  nodesOutputVars?: ReadonlyArray<unknown>
+  availableNodes?: ReadonlyArray<unknown>
+  isShowContext?: boolean
+}
+
+vi.mock('@/app/components/workflow/nodes/_base/components/prompt/editor', () => ({
+  __esModule: true,
+  default: ({
+    value,
+    readOnly,
+    onChange,
+    nodesOutputVars = [],
+    availableNodes = [],
+    isShowContext,
+  }: PromptEditorMockProps) => (
+    <div data-testid="prompt-editor">
+      <textarea
+        data-testid="prompt-editor-textarea"
+        value={value}
+        disabled={Boolean(readOnly)}
+        onChange={e => onChange(e.target.value)}
+      />
+      <span data-testid="prompt-editor-readonly">{String(Boolean(readOnly))}</span>
+      <span data-testid="prompt-editor-vars-count">{nodesOutputVars.length}</span>
+      <span data-testid="prompt-editor-nodes-count">{availableNodes.length}</span>
+      <span data-testid="prompt-editor-show-context">{String(Boolean(isShowContext))}</span>
+    </div>
+  ),
+}))
+
+// ``useAvailableVarList`` reaches into the workflow store via several
+// nested hooks; for a panel-wiring test we only care that the panel
+// forwards *something* from it into the editor, so stub it to a
+// deterministic empty result.
+vi.mock('@/app/components/workflow/nodes/_base/hooks/use-available-var-list', () => ({
+  __esModule: true,
+  default: () => ({
+    availableVars: [],
+    availableNodes: [],
+    availableNodesWithParent: [],
+  }),
+}))
+
 // ── Builders ────────────────────────────────────────────────────────
 
 const buildPayload = (
@@ -168,14 +221,16 @@ describe('token-model-source/panel', () => {
       expect(screen.getByTestId('var-item-model_alias')).toBeInTheDocument()
     })
 
-    it('renders the prompt textarea with the current template', () => {
+    it('renders the prompt editor with the current template and LLM-only blocks disabled', () => {
       mockUseConfig.mockReturnValue(buildConfig({
         inputs: buildPayload({ prompt_template: 'Hello {{#start.name#}}' }),
       }))
       renderPanel()
-      const textarea = document.querySelector('textarea') as HTMLTextAreaElement
-      expect(textarea).not.toBeNull()
+      const textarea = screen.getByTestId('prompt-editor-textarea') as HTMLTextAreaElement
       expect(textarea.value).toBe('Hello {{#start.name#}}')
+      // Token-mode prompts must not surface the chat-only ``context`` block
+      // — pin that wiring so a future edit can't silently turn it back on.
+      expect(screen.getByTestId('prompt-editor-show-context').textContent).toBe('false')
     })
   })
 
@@ -200,12 +255,12 @@ describe('token-model-source/panel', () => {
       expect(handleSamplingParamsChange).toHaveBeenCalledWith({ top_k: 5 })
     })
 
-    it('invokes handlePromptTemplateChange when the textarea changes', () => {
+    it('invokes handlePromptTemplateChange when the prompt editor changes', () => {
       const handlePromptTemplateChange = vi.fn()
       mockUseConfig.mockReturnValue(buildConfig({ handlePromptTemplateChange }))
       renderPanel()
 
-      const textarea = document.querySelector('textarea') as HTMLTextAreaElement
+      const textarea = screen.getByTestId('prompt-editor-textarea') as HTMLTextAreaElement
       fireEvent.change(textarea, { target: { value: 'New prompt' } })
       expect(handlePromptTemplateChange).toHaveBeenCalledWith('New prompt')
     })
@@ -222,15 +277,15 @@ describe('token-model-source/panel', () => {
       expect(screen.getByTestId('alias-loading').textContent).toBe('true')
     })
 
-    it('forwards readOnly into both the alias selector and the sampling form', () => {
+    it('forwards readOnly into the alias selector, the sampling form, and the prompt editor', () => {
       mockUseConfig.mockReturnValue(buildConfig({ readOnly: true }))
       renderPanel()
       expect(screen.getByTestId('alias-readonly').textContent).toBe('true')
       expect(screen.getByTestId('sampling-readonly').textContent).toBe('true')
-      // The prompt textarea is owned by the panel itself — assert
-      // it disables in the same readonly state.
-      const textarea = document.querySelector('textarea') as HTMLTextAreaElement
-      expect(textarea.disabled).toBe(true)
+      // The prompt editor reads ``readOnly`` directly; without this the
+      // panel could go read-only for the surrounding controls while
+      // leaving the prompt freely editable.
+      expect(screen.getByTestId('prompt-editor-readonly').textContent).toBe('true')
     })
 
     it('forwards an empty models list to the alias selector', () => {
