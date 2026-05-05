@@ -11,6 +11,7 @@ without standing up a network — the production wire-up (P2.9) injects
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -28,20 +29,27 @@ from core.workflow.nodes.parallel_ensemble.spi.capability import Capability
 
 
 class _FakeResponse:
-    """Tiny stand-in for ``httpx.Response`` covering the methods the
-    backend actually calls (``raise_for_status`` / ``json`` / ``text``)."""
+    """Tiny stand-in matching the graphon ``HttpResponse`` surface the
+    backend actually calls (``raise_for_status`` / ``text``).
 
-    def __init__(self, payload: Any = None, text: str = "", status: int = 200) -> None:
+    When ``text`` is not given explicitly, ``payload`` is serialised so
+    callers can keep passing ``payload=`` like before — the backend
+    decodes via ``response.text`` to stay compatible with both the
+    graphon wrapper (production) and httpx-style responses (test
+    fakes that may also expose ``.json``).
+    """
+
+    def __init__(self, payload: Any = None, text: str | None = None, status: int = 200) -> None:
         self._payload = payload
-        self.text = text
+        if text is None:
+            self.text = "" if payload is None else json.dumps(payload)
+        else:
+            self.text = text
         self.status = status
 
     def raise_for_status(self) -> None:
         if self.status >= 400:
             raise AssertionError(f"unexpected status {self.status}")
-
-    def json(self) -> Any:
-        return self._payload
 
 
 class _FakeHttp:
@@ -429,3 +437,31 @@ class TestSsrfProxyInjection:
         assert result == [{"token": "ok", "prob": 1.0, "logit": None}]
         assert recorded["url"] == "http://internal.test:8080/completion"
         assert recorded["json"]["post_sampling_probs"] is True
+
+    def test_step_token_against_graphon_httpresponse(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: ``node_factory`` injects ``graphon_ssrf_proxy``,
+        whose ``post`` returns a graphon ``HttpResponse`` that has no
+        ``.json()``. Decoding via ``response.text`` is what keeps the
+        backend wire-compatible with both transports.
+        """
+        from core.helper import ssrf_proxy as ssrf_module
+        from graphon.http.response import HttpResponse
+
+        payload = {"completion_probabilities": [{"top_probs": [{"token": "ok", "prob": 1.0}]}]}
+        response = HttpResponse(
+            status_code=200,
+            headers={"content-type": "application/json"},
+            content=json.dumps(payload).encode("utf-8"),
+            url="http://internal.test:8080/completion",
+            reason_phrase="OK",
+        )
+        assert not hasattr(response, "json")  # graphon contract — guard against drift.
+
+        def _fake_post(url: str, **kwargs: Any) -> HttpResponse:
+            del url, kwargs
+            return response
+
+        monkeypatch.setattr(ssrf_module.graphon_ssrf_proxy, "post", _fake_post)
+        backend = LlamaCppBackend(_spec(), http=ssrf_module.graphon_ssrf_proxy)
+        out = backend.step_token("p", TokenStepParams(top_k=3))
+        assert out == [{"token": "ok", "prob": 1.0, "logit": None}]

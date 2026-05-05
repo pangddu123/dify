@@ -23,6 +23,7 @@ that ride on top of them.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -50,22 +51,23 @@ def _spec(**overrides: Any) -> LlamaCppSpec:
 
 
 class _FakeResponse:
-    """Minimal stand-in for ``httpx.Response`` for the methods the
-    backend actually uses (``raise_for_status`` / ``json`` / ``text``).
-    Re-defined here (instead of imported from the sibling test file)
-    so this directory remains self-contained — P2.3's brief is "tests
-    under ``llama_cpp/``", and pulling fixtures across directories
-    would tie the new pytest layout to a sibling we may rename."""
+    """Minimal stand-in matching the graphon ``HttpResponse`` surface
+    (``raise_for_status`` / ``text``). Re-defined here (instead of
+    imported from the sibling test file) so this directory remains
+    self-contained — P2.3's brief is "tests under ``llama_cpp/``",
+    and pulling fixtures across directories would tie the new pytest
+    layout to a sibling we may rename. ``text`` is auto-derived from
+    ``payload`` so callers can keep the ``payload=`` shorthand."""
 
-    def __init__(self, payload: Any = None, text: str = "") -> None:
+    def __init__(self, payload: Any = None, text: str | None = None) -> None:
         self._payload = payload
-        self.text = text
+        if text is None:
+            self.text = "" if payload is None else json.dumps(payload)
+        else:
+            self.text = text
 
     def raise_for_status(self) -> None:
         return None
-
-    def json(self) -> Any:
-        return self._payload
 
 
 # ── test_capability_declaration ───────────────────────────────────────

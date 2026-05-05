@@ -273,9 +273,13 @@ class LlamaCppBackend(ModelBackend):
         url = f"{self._base_url()}{path}"
         # ``self._http`` follows ``HttpClientProtocol`` (see
         # ``graphon.nodes.protocols``); production wiring injects
-        # ``ssrf_proxy`` so the URL is reachable only via the SSRF
-        # proxy. The cast at runtime is safe — every method we call
-        # exists on the protocol.
+        # ``graphon_ssrf_proxy`` so the URL is reachable only via the
+        # SSRF proxy. Decode via ``response.text`` rather than
+        # ``response.json()`` because graphon's ``HttpResponse`` only
+        # exposes the transport-agnostic surface (text/content/
+        # raise_for_status); calling ``.json()`` would AttributeError
+        # against the production client even though httpx-style fakes
+        # define it.
         response = self._http.post(  # type: ignore[attr-defined]
             url,
             json=body,
@@ -283,7 +287,10 @@ class LlamaCppBackend(ModelBackend):
             timeout=self._timeout_seconds(),
         )
         response.raise_for_status()
-        return response.json()
+        try:
+            return json.loads(response.text)
+        except json.JSONDecodeError:
+            return None
 
     # ── SPI methods ───────────────────────────────────────────────────
 
